@@ -1,0 +1,7 @@
+{
+  "status": "NOT_VERIFIED",
+  "dataset": "Sen1Floods11 (v1.1 Hand-Labeled Test Split)",
+  "test_chips_count": 90,
+  "message": "Evaluation artifacts require a trained checkpoint (floodsight_unet_resnet34_best.pth) and dataset execution. No evaluation metrics are fabricated.",
+  "checkpoint_available": false
+}

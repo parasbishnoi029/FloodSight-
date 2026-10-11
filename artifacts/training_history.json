@@ -1,0 +1,4 @@
+{
+  "status": "NOT_RUN",
+  "message": "Training has not been executed yet. Checkpoint will be written to models/flood_segmentation/floodsight_unet_resnet34_best.pth upon real training execution."
+}

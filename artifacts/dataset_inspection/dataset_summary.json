@@ -1,0 +1,41 @@
+{
+  "dataset_name": "Sen1Floods11",
+  "version": "1.1",
+  "modality": "Sentinel-2 MSI Optical",
+  "total_handlabeled_chips": 431,
+  "splits": {
+    "train": 252,
+    "validation": 89,
+    "test": 90
+  },
+  "image_shape": [
+    3,
+    512,
+    512
+  ],
+  "gsd_meters": 10.0,
+  "label_mapping": {
+    "0": "non_flooded",
+    "1": "flooded",
+    "-1": "nodata_ignored"
+  },
+  "preprocessing": {
+    "scaling": "DN / 10000.0",
+    "channels": [
+      "B4_Red",
+      "B3_Green",
+      "B2_Blue"
+    ],
+    "normalization_mean": [
+      0.158,
+      0.164,
+      0.151
+    ],
+    "normalization_std": [
+      0.132,
+      0.128,
+      0.134
+    ]
+  },
+  "loss_ignore_index": -1
+}

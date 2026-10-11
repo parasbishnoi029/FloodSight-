@@ -1,0 +1,6 @@
+experiment_id,description,loss_function,augmentation,learning_rate,status,val_iou,val_dice,val_precision,val_recall,test_iou,test_dice
+exp_00_baseline,Baseline UNet + ResNet18,BCE,None,0.001,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
+exp_01_aug,UNet ResNet34 + Flips/Rotations,BCE,Flips + 90deg,0.0005,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
+exp_02_loss,UNet ResNet34 + BCE + Dice,BCE + Dice (0.5/0.5),Flips + 90deg,0.0003,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
+exp_03_finetune,UNet ResNet34 Multi-Scale Decoder,BCE + Dice,Full Remote Sensing Aug,0.0003,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
+exp_04_thresh,Threshold Calibration (tau=0.50),BCE + Dice,Full Remote Sensing Aug,0.0003,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN

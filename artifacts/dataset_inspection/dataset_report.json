@@ -1,0 +1,103 @@
+{
+  "status": "DATASET_AVAILABLE",
+  "dataset_name": "Sen1Floods11",
+  "dataset_version": "v1.1",
+  "modality": "Sentinel-2 MSI Optical Surface Reflectance + Hand-Labeled Flood Water",
+  "timestamp": "2026-10-09T11:17:55Z",
+  "paths": {
+    "project_root": "/app/applet",
+    "data_directory": "/app/applet/datasets/sen1floods11/v1.1/data/flood_events/HandLabeled",
+    "splits_directory": "/app/applet/datasets/sen1floods11/v1.1/splits/flood_handlabeled",
+    "subdirectories_inspected": {
+      "data_root_exists": true,
+      "S2Hand_exists": true,
+      "LabelHand_exists": true,
+      "S1Hand_exists": false
+    }
+  },
+  "sample_counts": {
+    "total_train_samples": 252,
+    "total_validation_samples": 89,
+    "total_test_samples": 90,
+    "total_split_samples": 431
+  },
+  "integrity_metrics": {
+    "missing_images_count": 0,
+    "missing_labels_count": 0,
+    "duplicate_chip_ids_count": 0,
+    "corrupted_tiffs_count": 0,
+    "duplicates_list": []
+  },
+  "raster_characteristics": {
+    "image_dimensions": [
+      512,
+      512
+    ],
+    "mask_dimensions": [
+      512,
+      512
+    ],
+    "image_dtype": "int16",
+    "mask_dtype": "int16",
+    "channel_count": 13,
+    "raw_value_range": [
+      44.0,
+      5658.0
+    ],
+    "mask_unique_values": [
+      -1,
+      0,
+      1
+    ],
+    "nodata_values": [
+      -1
+    ],
+    "invalid_pixels": 2875,
+    "geospatial_metadata": {
+      "ImageWidth": "512",
+      "ImageLength": "512",
+      "ModelPixelScaleTag": "(8.983152841195215e-05, 8.983152841195215e-05, 0.0)",
+      "ModelTiepointTag": "(0.0, 0.0, 0.0, -1.1498435636729876, 9.474710964665418, 0.0)",
+      "GeoKeyDirectoryTag": "(1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0)"
+    },
+    "crs": "(1, 1, 0, 7, 1024, 0, 1, 2, 1025, 0, 1, 1, 2048, 0, 1, 4326, 2049, 34737, 7, 0, 2054, 0, 1, 9102, 2057, 34736, 1, 1, 2059, 34736, 1, 0)",
+    "pixel_resolution": "10.0m",
+    "band_information": "Sentinel-2 MSI 13 Bands (B1-B12)"
+  },
+  "expected_sen1floods11_contract": {
+    "spatial_dimensions": [
+      512,
+      512
+    ],
+    "optical_channels": 13,
+    "unet_input_channels": [
+      "B4 (Red)",
+      "B3 (Green)",
+      "B2 (Blue)"
+    ],
+    "gsd_pixel_resolution": "10.0 meters / pixel",
+    "crs_projection": "WGS 84 / UTM zones corresponding to flood scenes",
+    "mask_label_encoding": {
+      "0": "Non-Flooded Land",
+      "1": "Flooded Water",
+      "-1": "No-Data / Invalid / Permanent Water"
+    },
+    "loss_masking": "Target == -1 excluded from gradient backpropagation"
+  },
+  "training_clearance": {
+    "clearance_granted": true,
+    "decision": "TRAIN_ALLOWED",
+    "reason": "All 431 TIFF tiles and ground-truth masks present and verified."
+  },
+  "download_instructions": {
+    "official_source": "Sen1Floods11 (Cloud to Street / ESA / Google Cloud Public Datasets)",
+    "gcs_bucket": "gs://sen1floods11/v1.1/data/flood_events/HandLabeled/",
+    "public_url_prefix": "https://storage.googleapis.com/sen1floods11/v1.1/data/flood_events/HandLabeled/",
+    "target_directories": [
+      "datasets/sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand/",
+      "datasets/sen1floods11/v1.1/data/flood_events/HandLabeled/LabelHand/"
+    ],
+    "automated_fetcher_script": "python -m backend.training.prepare_dataset",
+    "manual_gsutil_command": "gsutil -m cp -r gs://sen1floods11/v1.1/data/flood_events/HandLabeled/S2Hand datasets/sen1floods11/v1.1/data/flood_events/HandLabeled/"
+  }
+}
