@@ -17,8 +17,11 @@ import {
   SlidersHorizontal,
   Compass,
   Zap,
-  BarChart3
+  BarChart3,
+  Lock,
+  Info
 } from 'lucide-react';
+import { FloodAnalysisResult } from '../../types';
 
 export interface ExtrudedFloodTerrainProps {
   className?: string;
@@ -27,6 +30,9 @@ export interface ExtrudedFloodTerrainProps {
   floodCoveragePercent?: number;
   initialWaterLevel?: number; // 0 to 1
   extrusionScale?: number; // 1 to 5
+  analysisResult?: FloodAnalysisResult | null;
+  hasMeasuredDem?: boolean;
+  measuredElevationMeters?: number | null;
 }
 
 interface InfrastructurePin {
@@ -436,6 +442,9 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   floodCoveragePercent = 28.4,
   initialWaterLevel = 0.45,
   extrusionScale = 2.0,
+  analysisResult = null,
+  hasMeasuredDem = false,
+  measuredElevationMeters = null,
 }) => {
   const [waterLevel, setWaterLevel] = useState<number>(initialWaterLevel);
   const [verticalExaggeration, setVerticalExaggeration] = useState<number>(extrusionScale);
@@ -447,16 +456,24 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   const [hoveredPin, setHoveredPin] = useState<InfrastructurePin | null>(null);
   const [depthProbe, setDepthProbe] = useState<DepthProbeData | null>(null);
   const [cameraView, setCameraView] = useState<'perspective' | 'top' | 'crossSection'>('perspective');
+  const [sarNotice, setSarNotice] = useState<string | null>(null);
 
   const controlsRef = useRef<any>(null);
+
+  const isVerifiedAnalysis = Boolean(analysisResult && analysisResult.status === 'SUCCESS');
 
   // Calibrated Physical Hydraulic Metrics
   const minElevationMsl = 2.0;
   const maxElevationMsl = 48.0;
-  const waterSurfaceMsl = parseFloat(((( (-0.32 + waterLevel * 0.72) + 0.6) / 1.6) * (maxElevationMsl - minElevationMsl) + minElevationMsl).toFixed(1));
+  const relativeSurfaceHeight = parseFloat(((( (-0.32 + waterLevel * 0.72) + 0.6) / 1.6) * (maxElevationMsl - minElevationMsl) + minElevationMsl).toFixed(1));
   const peakFloodStage = (waterLevel * 10.5).toFixed(1);
-  const totalAreaHa = Math.round(floodCoveragePercent * 18.5);
-  const estimatedVolumeM3 = (totalAreaHa * (parseFloat(peakFloodStage) * 0.45) * 10000).toLocaleString();
+  const illustrativeAreaHa = Math.round(floodCoveragePercent * 18.5);
+
+  const displayedAreaHa = isVerifiedAnalysis
+    ? analysisResult?.physical_area_ha !== null
+      ? `${analysisResult?.physical_area_ha?.toLocaleString()} ha`
+      : 'NOT AVAILABLE'
+    : `${illustrativeAreaHa} ha`;
 
   const resetCamera = (mode: 'perspective' | 'top' | 'crossSection') => {
     setCameraView(mode);
@@ -524,29 +541,53 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                   {selectedLocation}
                 </span>
               </div>
-              <span className="text-[9px] font-mono text-cyan-300 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-800">
-                {terrainType.toUpperCase()}
+              <span className={`text-[9px] font-mono px-2 py-0.5 rounded border ${
+                isVerifiedAnalysis
+                  ? 'text-cyan-300 bg-cyan-950/80 border-cyan-800'
+                  : 'text-amber-300 bg-amber-950/80 border-amber-800'
+              }`}>
+                {isVerifiedAnalysis ? 'VERIFIED MODEL ANALYSIS' : 'ILLUSTRATIVE 3D MESH'}
               </span>
             </div>
 
-            {/* Strict Physical Measurements */}
+            {/* Truthful Physical Measurements Readout */}
             <div className="grid grid-cols-3 gap-2 text-[10px] font-mono pt-2 mt-1 border-t border-slate-800/80">
               <div>
-                <span className="text-slate-400 block">Water Stage</span>
+                <span className="text-slate-400 block">Relative Stage</span>
                 <span className="text-cyan-300 font-bold tabular-nums">+{peakFloodStage}m</span>
+                <span className="text-[9px] text-slate-500 block">Visual relief</span>
               </div>
               <div>
-                <span className="text-slate-400 block">Hydraulic Crest</span>
-                <span className="text-white font-bold tabular-nums">{waterSurfaceMsl}m MSL</span>
+                <span className="text-slate-400 block">Elevation</span>
+                {hasMeasuredDem && measuredElevationMeters !== null ? (
+                  <>
+                    <span className="text-white font-bold tabular-nums">{measuredElevationMeters.toFixed(1)}m</span>
+                    <span className="text-[9px] text-cyan-400 block">DEM datum</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-slate-300 font-bold">Illustrative</span>
+                    <span className="text-[9px] text-slate-500 block">DEM unavailable</span>
+                  </>
+                )}
               </div>
               <div>
-                <span className="text-slate-400 block">Inundated Area</span>
-                <span className="text-amber-300 font-bold tabular-nums">{totalAreaHa} ha</span>
+                <span className="text-slate-400 block">Flooded Surface</span>
+                <span className={`font-bold tabular-nums ${isVerifiedAnalysis ? 'text-cyan-300' : 'text-amber-300'}`}>
+                  {displayedAreaHa}
+                </span>
+                <span className={`text-[9px] block ${isVerifiedAnalysis ? 'text-cyan-500' : 'text-amber-500'}`}>
+                  {isVerifiedAnalysis ? (analysisResult?.area_calculation_method || 'Model calculated') : 'Illustrative'}
+                </span>
               </div>
             </div>
 
             <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 pt-1.5 mt-1 border-t border-slate-800/60">
-              <span className="text-amber-400/90 font-bold">VISUALIZATION ONLY — NOT MEASURED SATELLITE DEM</span>
+              <span className={isVerifiedAnalysis ? 'text-cyan-400 font-semibold' : 'text-amber-400/90 font-bold'}>
+                {isVerifiedAnalysis
+                  ? 'PREDICTION DERIVED FROM REAL MODEL CHECKPOINT · TERRAIN RELIEF IS ILLUSTRATIVE'
+                  : 'VISUALIZATION ONLY — NOT MEASURED SATELLITE DEM'}
+              </span>
             </div>
           </div>
         </div>
@@ -555,19 +596,19 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
         <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5 z-10 pointer-events-auto">
           
           {/* Shading / Modality Tabs */}
-          <div className="bg-slate-950/85 backdrop-blur-md p-1 rounded-xl border border-slate-800/90 flex items-center gap-1 shadow-xl text-[10px] font-mono">
+          <div className="bg-slate-950/85 backdrop-blur-md p-1 rounded-xl border border-slate-800/90 flex items-center gap-1 shadow-xl text-[10px] font-mono flex-wrap justify-end">
             <button
-              onClick={() => setShadingMode('hypsometric')}
+              onClick={() => { setShadingMode('hypsometric'); setSarNotice(null); }}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                 shadingMode === 'hypsometric'
                   ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              Elevation Hypsometry
+              Elevation Tint
             </button>
             <button
-              onClick={() => setShadingMode('depth')}
+              onClick={() => { setShadingMode('depth'); setSarNotice(null); }}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                 shadingMode === 'depth'
                   ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
@@ -577,17 +618,17 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               Depth Hazard
             </button>
             <button
-              onClick={() => setShadingMode('probability')}
+              onClick={() => { setShadingMode('probability'); setSarNotice(null); }}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                 shadingMode === 'probability'
                   ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              U-Net Probability (P)
+              {isVerifiedAnalysis ? `U-Net Prob (${(analysisResult!.confidence_mean * 100).toFixed(0)}%)` : 'U-Net Prob (P)'}
             </button>
             <button
-              onClick={() => setShadingMode('satellite')}
+              onClick={() => { setShadingMode('satellite'); setSarNotice(null); }}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                 shadingMode === 'satellite'
                   ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
@@ -597,22 +638,41 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               Sentinel-2 S2
             </button>
             <button
-              onClick={() => setShadingMode('sar')}
-              className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
-                shadingMode === 'sar'
-                  ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
-                  : 'text-slate-400 hover:text-white'
-              }`}
+              onClick={() => {
+                setSarNotice(
+                  'SAR LAYER DISABLED: Current FloodSight-UNet-ResNet34 checkpoint is trained strictly on Sentinel-2 optical bands (B4, B3, B2). Processing Sentinel-1 C-band SAR radar requires a separate radar-trained model contract.'
+                );
+              }}
+              title="Sentinel-1 SAR is disabled for optical models"
+              className="px-2.5 py-1 rounded-lg text-slate-500 hover:text-slate-400 flex items-center gap-1 cursor-pointer bg-slate-900/60 border border-slate-800"
             >
-              Sentinel-1 SAR
+              <Lock className="w-3 h-3 text-amber-500" />
+              <span>Sentinel-1 SAR</span>
             </button>
           </div>
+
+          {/* SAR Disabled Notice Banner */}
+          {sarNotice && (
+            <div className="bg-amber-950/90 border border-amber-500/60 rounded-xl p-2.5 max-w-sm text-left font-mono text-[10px] text-amber-200 shadow-xl flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold">{sarNotice}</p>
+                <button
+                  onClick={() => setSarNotice(null)}
+                  className="text-[9px] underline text-amber-300 hover:text-amber-100 cursor-pointer"
+                >
+                  Dismiss notice
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Camera View Presets & Cross-Section Toggle */}
           <div className="flex items-center gap-1.5">
             <div className="bg-slate-950/85 backdrop-blur-md p-1 rounded-lg border border-slate-800/90 flex items-center gap-1 shadow-lg text-[10px] font-mono">
               <button
                 onClick={() => resetCamera('perspective')}
+                aria-label="3D Perspective Camera"
                 className={`px-2 py-0.8 rounded transition-colors cursor-pointer ${
                   cameraView === 'perspective' ? 'bg-slate-800 text-cyan-300 font-bold' : 'text-slate-400 hover:text-white'
                 }`}
@@ -621,6 +681,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               </button>
               <button
                 onClick={() => resetCamera('top')}
+                aria-label="Top Nadir Camera"
                 className={`px-2 py-0.8 rounded transition-colors cursor-pointer ${
                   cameraView === 'top' ? 'bg-slate-800 text-cyan-300 font-bold' : 'text-slate-400 hover:text-white'
                 }`}
@@ -629,6 +690,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               </button>
               <button
                 onClick={() => resetCamera('crossSection')}
+                aria-label="Side Profile Camera"
                 className={`px-2 py-0.8 rounded transition-colors cursor-pointer ${
                   cameraView === 'crossSection' ? 'bg-slate-800 text-cyan-300 font-bold' : 'text-slate-400 hover:text-white'
                 }`}
@@ -665,12 +727,12 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
 
             <div className="text-[10px] text-slate-300 space-y-0.5 pt-0.5">
               <div className="flex justify-between">
-                <span className="text-slate-400">Ground Elevation:</span>
-                <span className="text-white font-bold">{depthProbe.groundElevationMeters}m MSL</span>
+                <span className="text-slate-400">Ground Relief:</span>
+                <span className="text-white font-bold">{depthProbe.groundElevationMeters}m (Relative)</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Flood Hydraulic Level:</span>
-                <span className="text-cyan-300 font-bold">{depthProbe.waterSurfaceMeters}m MSL</span>
+                <span className="text-slate-400">Relative Flood Stage:</span>
+                <span className="text-cyan-300 font-bold">+{peakFloodStage}m</span>
               </div>
               <div className="flex justify-between pt-0.5 border-t border-slate-800">
                 <span className="text-slate-400">Water Column Depth:</span>
@@ -679,7 +741,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                 </span>
               </div>
               <div className="text-[9px] text-cyan-400 pt-0.5">
-                Class: <strong>{depthProbe.classification}</strong>
+                Class: <strong>{depthProbe.classification}</strong> (Illustrative)
               </div>
             </div>
           </div>
@@ -693,17 +755,17 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
                 hoveredPin.isSubmerged ? 'bg-rose-950 text-rose-300 border border-rose-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800'
               }`}>
-                {hoveredPin.isSubmerged ? 'INUNDATED' : 'OPERATIONAL'}
+                {hoveredPin.isSubmerged ? 'SIMULATED INUNDATION' : 'SIMULATED CLEAR'}
               </span>
             </div>
-            <p className="text-[10px] text-slate-400">Type: {hoveredPin.type} · Elevation: {hoveredPin.elevationMsl}m MSL</p>
+            <p className="text-[10px] text-slate-400">Type: {hoveredPin.type} · Relative Relief: ~{hoveredPin.elevationMsl}m (Illustrative)</p>
             {hoveredPin.isSubmerged ? (
               <p className="text-[10px] text-rose-400 font-semibold">
-                ⚠ Road access severed. Evacuation routing rerouted.
+                ⚠ Road access potentially affected. Ground verification required.
               </p>
             ) : (
               <p className="text-[10px] text-emerald-400 font-semibold">
-                ✓ Above water level. Designated emergency safe haven.
+                ✓ Above simulated stage level. Requires field inspection.
               </p>
             )}
           </div>
@@ -717,31 +779,34 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                 <TrendingUp className="w-3.5 h-3.5" />
                 <span>HYDRAULIC ELEVATION PROFILE A-A'</span>
               </div>
-              <span className="text-[9px] text-slate-400">West → East</span>
+              <span className="text-[9px] text-amber-400 font-semibold">Illustrative Transect</span>
             </div>
 
             {/* Cross Section SVG Diagram */}
             <div className="h-20 w-full bg-slate-900/80 rounded border border-slate-800 relative flex items-end overflow-hidden px-1">
               <svg className="w-full h-full" viewBox="0 0 100 40" preserveAspectRatio="none">
                 {/* Water Column Fill */}
-                <rect x="25" y={40 - (waterSurfaceMsl / maxElevationMsl) * 35} width="50" height={(waterSurfaceMsl / maxElevationMsl) * 35} fill="#0284c7" opacity="0.4" />
+                <rect x="25" y={40 - (relativeSurfaceHeight / maxElevationMsl) * 35} width="50" height={(relativeSurfaceHeight / maxElevationMsl) * 35} fill="#0284c7" opacity="0.4" />
                 
                 {/* Water Surface Line */}
-                <line x1="20" y1={40 - (waterSurfaceMsl / maxElevationMsl) * 35} x2="80" y2={40 - (waterSurfaceMsl / maxElevationMsl) * 35} stroke="#38bdf8" strokeWidth="1" strokeDasharray="2,2" />
+                <line x1="20" y1={40 - (relativeSurfaceHeight / maxElevationMsl) * 35} x2="80" y2={40 - (relativeSurfaceHeight / maxElevationMsl) * 35} stroke="#38bdf8" strokeWidth="1" strokeDasharray="2,2" />
                 
                 {/* Terrain Bed Profile */}
                 <path d="M 0 35 Q 25 38, 40 28 T 60 12 T 80 8 L 100 5 L 100 40 L 0 40 Z" fill="#0f172a" stroke="#64748b" strokeWidth="1.2" />
               </svg>
 
-              <div className="absolute top-1 left-2 text-[8px] text-slate-400">Peak MSL: 48m</div>
+              <div className="absolute top-1 left-2 text-[8px] text-slate-400">Peak: ~48m (Synthetic)</div>
               <div className="absolute top-1 right-2 text-[8px] text-cyan-300">Stage: +{peakFloodStage}m</div>
             </div>
 
             <div className="flex justify-between text-[9px] text-slate-400">
-              <span>Valley Bed: <strong>2m MSL</strong></span>
-              <span>Water Depth: <strong className="text-cyan-400">+{peakFloodStage}m</strong></span>
-              <span>Plateau: <strong>36m MSL</strong></span>
+              <span>Floor: <strong>~2m</strong></span>
+              <span>Visual Depth: <strong className="text-cyan-400">+{peakFloodStage}m</strong></span>
+              <span>Plateau: <strong>~36m</strong></span>
             </div>
+            <p className="text-[8px] text-slate-500 leading-tight">
+              Notice: Synthetic cross-section. No measured river bathymetry or calibrated hydrodynamic modeling (e.g. HEC-RAS).
+            </p>
           </div>
         )}
 
@@ -760,7 +825,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                 <Waves className="w-3.5 h-3.5 text-cyan-400" />
                 <span>Extruded Water Stage Level:</span>
               </div>
-              <span className="text-white font-bold tabular-nums">+{peakFloodStage}m ({waterSurfaceMsl}m MSL)</span>
+              <span className="text-white font-bold tabular-nums">+{peakFloodStage}m (Visual relief)</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-mono text-slate-400">0m Baseline</span>

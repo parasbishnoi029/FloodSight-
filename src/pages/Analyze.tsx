@@ -657,6 +657,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
             floodCoveragePercent={analysisResult.coverage_percent}
             initialWaterLevel={Math.min(0.85, Math.max(0.2, analysisResult.coverage_percent / 50))}
             extrusionScale={2.2}
+            analysisResult={analysisResult}
           />
         </section>
       )}
