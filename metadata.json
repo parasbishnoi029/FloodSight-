@@ -2,5 +2,7 @@
   "name": "FloodSight AI",
   "description": "Satellite-powered flood damage intelligence platform mapping submerged roads, cut-off bridges, isolated communities, and emergency response priorities.",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
