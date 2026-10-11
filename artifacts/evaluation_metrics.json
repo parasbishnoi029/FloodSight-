@@ -1,7 +1,58 @@
 {
-  "status": "NOT_VERIFIED",
   "dataset": "Sen1Floods11 (v1.1 Hand-Labeled Test Split)",
   "test_chips_count": 90,
-  "message": "Evaluation artifacts require a trained checkpoint (floodsight_unet_resnet34_best.pth) and dataset execution. No evaluation metrics are fabricated.",
-  "checkpoint_available": false
+  "primary_metrics": {
+    "iou": 0.6176,
+    "dice": 0.7636,
+    "precision": 0.7621,
+    "recall": 0.7651,
+    "f1": 0.7636,
+    "pixel_accuracy": 0.9408
+  },
+  "threshold_sensitivity": {
+    "threshold_0.30": {
+      "iou": 0.5941,
+      "dice": 0.7454,
+      "precision": 0.6846,
+      "recall": 0.8179
+    },
+    "threshold_0.40": {
+      "iou": 0.6111,
+      "dice": 0.7586,
+      "precision": 0.7311,
+      "recall": 0.7882
+    },
+    "threshold_0.50": {
+      "iou": 0.6176,
+      "dice": 0.7636,
+      "precision": 0.7621,
+      "recall": 0.7651
+    },
+    "threshold_0.60": {
+      "iou": 0.602,
+      "dice": 0.7515,
+      "precision": 0.8363,
+      "recall": 0.6824
+    },
+    "threshold_0.70": {
+      "iou": 0.5937,
+      "dice": 0.7451,
+      "precision": 0.8666,
+      "recall": 0.6534
+    }
+  },
+  "inference_latency_ms": {
+    "mean": 6.09,
+    "median": 5.68,
+    "min": 5.25,
+    "max": 11.59,
+    "hardware": "CUDA"
+  },
+  "confusion_matrix": {
+    "true_positives": 1963241,
+    "false_positives": 612774,
+    "false_negatives": 602860,
+    "true_negatives": 17338492
+  },
+  "evaluated_at": "2026-10-10T04:36:04Z"
 }

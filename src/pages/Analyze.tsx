@@ -116,6 +116,11 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
   const handleRunInference = async () => {
     if (!selectedFile || !verificationResult) return;
 
+    if (health && !health.model_available) {
+      setErrorMsg('FLOOD_MODEL_UNAVAILABLE: Inference is blocked because no trained model weights exist at models/flood_segmentation/floodsight_unet_resnet34_best.pth.');
+      return;
+    }
+
     setIsInferring(true);
     setErrorMsg(null);
 
@@ -459,13 +464,24 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
                   <button
                     onClick={handleRunInference}
-                    disabled={isInferring}
-                    className="w-full py-3.5 px-4 text-xs font-mono font-bold uppercase rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-all flex items-center justify-center gap-2 cursor-pointer shadow-[0_0_20px_rgba(6,182,212,0.3)] disabled:opacity-50"
+                    disabled={isInferring || Boolean(health && !health.model_available)}
+                    className={`w-full py-3.5 px-4 text-xs font-mono font-bold uppercase rounded transition-all flex items-center justify-center gap-2 ${
+                      health && !health.model_available
+                        ? 'bg-slate-900 border border-amber-900/60 text-amber-300/80 cursor-not-allowed opacity-80'
+                        : isInferring
+                        ? 'bg-cyan-600 text-slate-950 cursor-wait opacity-70'
+                        : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 cursor-pointer shadow-[0_0_20px_rgba(6,182,212,0.3)]'
+                    }`}
                   >
                     {isInferring ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
                         <span>Running U-Net ResNet-34 Segmentation...</span>
+                      </>
+                    ) : health && !health.model_available ? (
+                      <>
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                        <span>Inference Blocked — Checkpoint Absent</span>
                       </>
                     ) : (
                       <>

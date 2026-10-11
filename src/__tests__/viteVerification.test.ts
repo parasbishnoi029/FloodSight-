@@ -3,6 +3,7 @@
  */
 import { createFloodsightMiddleware, VERIFIED_REGISTRY } from '../server/floodsightMiddleware';
 import { EventEmitter } from 'events';
+import path from 'path';
 
 interface MockRequestOptions {
   method?: string;
@@ -427,7 +428,106 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
     });
 
     it('fails closed with HTTP 503 FLOOD_MODEL_UNAVAILABLE when verified token is used but checkpoint is missing', async () => {
+      const absentMiddleware = createFloodsightMiddleware(path.join(__dirname, '__mocks__'));
       // 1. Verify a genuine TIFF to get an accepted token
+      const tiffBuffer = Buffer.alloc(12000, 0x00);
+      tiffBuffer[0] = 0x49;
+      tiffBuffer[1] = 0x49;
+      tiffBuffer[2] = 0x2a;
+      tiffBuffer[3] = 0x00;
+
+      const mpVerify = buildMultipart({}, {
+        name: 'file',
+        filename: 'accepted_scene.tif',
+        buffer: tiffBuffer,
+      });
+
+      const verifyRes = await executeMiddleware(absentMiddleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': mpVerify.contentType },
+        body: mpVerify.buffer,
+      });
+      const verifyData = verifyRes.json();
+      expect(verifyData.accepted_for_inference).toBe(true);
+
+      // 2. Submit accepted verification_id to /api/analyze
+      const mpAnalyze = buildMultipart({
+        verification_id: verifyData.verification_id,
+        threshold: '0.5',
+      });
+
+      const analyzeRes = await executeMiddleware(absentMiddleware, {
+        method: 'POST',
+        url: '/api/analyze',
+        headers: { 'content-type': mpAnalyze.contentType },
+        body: mpAnalyze.buffer,
+      });
+
+      // Strict Zero-Fabrication: Since checkpoint is missing, MUST return 503
+      expect(analyzeRes.statusCode).toBe(503);
+      const data = analyzeRes.json();
+      expect(data.error).toBe('FLOOD_MODEL_UNAVAILABLE');
+      expect(data.message).toBe('No trained FloodSight segmentation checkpoint is installed.');
+      expect(data.checkpoint_expected_path).toBe('models/flood_segmentation/floodsight_unet_resnet34_best.pth');
+    });
+
+    it('GET /api/health accurately reports degraded status and model_available: false when checkpoint is absent', async () => {
+      const absentMiddleware = createFloodsightMiddleware(path.join(__dirname, '__mocks__'));
+      const res = await executeMiddleware(absentMiddleware, {
+        method: 'GET',
+        url: '/api/health',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const data = res.json();
+      expect(data.status).toBe('degraded');
+      expect(data.model_available).toBe(false);
+      expect(data.checkpoint_path).toBeNull();
+      expect(data.service).toContain('FloodSight Verification & Inference Gateway');
+    });
+
+    it('GET /api/evaluation-metrics reports NOT_VERIFIED when evaluation artifacts have not run', async () => {
+      const absentMiddleware = createFloodsightMiddleware(path.join(__dirname, '__mocks__'));
+      const res = await executeMiddleware(absentMiddleware, {
+        method: 'GET',
+        url: '/api/evaluation-metrics',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const data = res.json();
+      expect(data.status).toBe('NOT_VERIFIED');
+      expect(data.message).toContain('Evaluation artifacts require a trained checkpoint');
+      expect(data.checkpoint_available).toBe(false);
+    });
+
+    it('GET /api/health accurately reports healthy and model_available: true when checkpoint is present', async () => {
+      const res = await executeMiddleware(middleware, {
+        method: 'GET',
+        url: '/api/health',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const data = res.json();
+      expect(data.status).toBe('healthy');
+      expect(data.model_available).toBe(true);
+      expect(data.checkpoint_path).toContain('floodsight_unet_resnet34_best.pth');
+    });
+
+    it('GET /api/evaluation-metrics serves genuine Sen1Floods11 test split metrics when artifacts exist', async () => {
+      const res = await executeMiddleware(middleware, {
+        method: 'GET',
+        url: '/api/evaluation-metrics',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const data = res.json();
+      expect(data.dataset).toContain('Sen1Floods11');
+      expect(data.primary_metrics.iou).toBe(0.6176);
+      expect(data.primary_metrics.dice).toBe(0.7636);
+    });
+
+    it('POST /api/analyze executes full segmentation analysis when checkpoint is present', async () => {
       const tiffBuffer = Buffer.alloc(12000, 0x00);
       tiffBuffer[0] = 0x49;
       tiffBuffer[1] = 0x49;
@@ -447,12 +547,14 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
         body: mpVerify.buffer,
       });
       const verifyData = verifyRes.json();
-      expect(verifyData.accepted_for_inference).toBe(true);
 
-      // 2. Submit accepted verification_id to /api/analyze
       const mpAnalyze = buildMultipart({
         verification_id: verifyData.verification_id,
         threshold: '0.5',
+      }, {
+        name: 'file',
+        filename: 'accepted_scene.tif',
+        buffer: tiffBuffer,
       });
 
       const analyzeRes = await executeMiddleware(middleware, {
@@ -462,39 +564,13 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
         body: mpAnalyze.buffer,
       });
 
-      // Strict Zero-Fabrication: Since checkpoint is missing, MUST return 503
-      expect(analyzeRes.statusCode).toBe(503);
+      expect(analyzeRes.statusCode).toBe(200);
       const data = analyzeRes.json();
-      expect(data.error).toBe('FLOOD_MODEL_UNAVAILABLE');
-      expect(data.message).toBe('No trained FloodSight segmentation checkpoint is installed.');
-      expect(data.checkpoint_expected_path).toBe('models/flood_segmentation/floodsight_unet_resnet34_best.pth');
-    });
-
-    it('GET /api/health accurately reports degraded status and model_available: false when checkpoint is absent', async () => {
-      const res = await executeMiddleware(middleware, {
-        method: 'GET',
-        url: '/api/health',
-      });
-
-      expect(res.statusCode).toBe(200);
-      const data = res.json();
-      expect(data.status).toBe('degraded');
-      expect(data.model_available).toBe(false);
-      expect(data.checkpoint_path).toBeNull();
-      expect(data.service).toContain('FloodSight Verification & Inference Gateway');
-    });
-
-    it('GET /api/evaluation-metrics reports NOT_VERIFIED when evaluation artifacts have not run', async () => {
-      const res = await executeMiddleware(middleware, {
-        method: 'GET',
-        url: '/api/evaluation-metrics',
-      });
-
-      expect(res.statusCode).toBe(200);
-      const data = res.json();
-      expect(data.status).toBe('NOT_VERIFIED');
-      expect(data.message).toContain('Evaluation artifacts require a trained checkpoint');
-      expect(data.checkpoint_available).toBe(false);
+      expect(data.status).toBe('SUCCESS');
+      expect(data.analysis_id).toBeDefined();
+      expect(data.flood_detected).toBe(true);
+      expect(data.physical_area_ha).toBeGreaterThan(0);
+      expect(data.area_calculation_method).toBe('GEOTIFF_AFFINE_GSD_10M');
     });
   });
 

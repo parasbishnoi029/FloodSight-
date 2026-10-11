@@ -28,12 +28,19 @@ ENV/
 env.bak/
 venv.bak/
 
-# Uploads & Temporary Cache
+# Uploads, Large Model Checkpoints & Datasets
 backend/uploads/
 uploads/
 *.tif
 *.tiff
 *.geotiff
+*.pth
+*.pt
+models/**/*.pth
+models/**/*.pt
+datasets/sen1floods11/v1.1/data/
+*.zip
+*.tar.gz
 
 # Environment variables & secrets
 .env

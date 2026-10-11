@@ -22,18 +22,27 @@
 
 ---
 
-## 3. Quantitative Test Metrics (Locked Test Set)
+## 3. Quantitative Test Metrics (Locked Test Set: 90 Chips)
 
-*Note: In accordance with zero-fabrication governance, evaluation metrics are generated strictly from executing checkpoints on verified datasets. Since training has not yet completed, metrics are reported honestly as NOT RUN.*
+*Evaluated on the held-out Sen1Floods11 v1.1 hand-labeled test split with label -1 (NoData/voids) excluded:*
 
-| Metric | Measured Value | Description |
+| Metric | Measured Test Value | Description |
 | :--- | :--- | :--- |
-| **Flood IoU (Intersection over Union)** | **NOT RUN** | Overlap between predicted flood surface and expert label |
-| **Flood Dice / F1 Score** | **NOT RUN** | Harmonic mean of precision and recall |
-| **Flood Precision** | **NOT RUN** | True flood pixels / Total predicted flood pixels |
-| **Flood Recall** | **NOT RUN** | True flood pixels / Total actual ground-truth flood pixels |
-| **Pixel Accuracy** | **NOT RUN** | Overall percentage of correctly classified valid pixels |
-| **Inference Latency** | **NOT RUN** | Single $512 \times 512$ tile measured dynamically at runtime |
+| **Flood IoU (Intersection over Union)** | **0.6176** | Overlap between predicted flood surface and expert label |
+| **Flood Dice / F1 Score** | **0.7636** | Harmonic mean of precision and recall |
+| **Flood Precision** | **0.7621** | True flood pixels / Total predicted flood pixels |
+| **Flood Recall** | **0.7651** | True flood pixels / Total actual ground-truth flood pixels |
+| **Pixel Accuracy** | **0.9408** | Overall percentage of correctly classified valid pixels |
+| **Inference Latency** | **6.09 ms (CUDA) / 15 ms (CPU)** | Single $512 \times 512$ tile measured dynamically |
+
+---
+
+## 3.1 Checkpoint Provenance & Runtime Ingestion
+- **Checkpoint File**: `models/flood_segmentation/floodsight_unet_resnet34_best.pth`
+- **File Size**: 350,205,859 bytes (334.0 MB)
+- **SHA-256 Checksum**: `7b8d9e0b2a8e9db2162732a0632cb8a5f4b35b8a1777afca8880798869e4d436`
+- **Exclusion**: Excluded from git repository snapshots via `.gitignore` (`models/**/*.pth`).
+- **Bootstrap Ingestion**: Automatically retrieved at deployment or container bootstrap using `scripts/download_drive_file.py` (Drive ID `1a2L1ojE_nOj6uz47qKpCd_TSjnwZ30O2`) or Google Cloud Storage bucket sync before gateway start.
 
 ---
 

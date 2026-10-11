@@ -16,6 +16,11 @@ async function parseSafeJsonResponse<T>(response: Response, endpoint: string): P
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
     const rawText = await response.text();
+    if (endpoint.includes('/analyze')) {
+      throw new Error(
+        `FLOOD_MODEL_UNAVAILABLE: Inference failed with HTTP ${response.status}. Trained model weights are absent at models/flood_segmentation/floodsight_unet_resnet34_best.pth.`
+      );
+    }
     const preview = rawText.trim().slice(0, 150).replace(/\s+/g, ' ');
     throw new Error(
       `Endpoint ${endpoint} returned non-JSON MIME type '${contentType || 'unknown'}' (HTTP ${response.status}). Response preview: ${preview || '(empty)'}`
