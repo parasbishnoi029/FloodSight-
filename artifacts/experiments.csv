@@ -2,5 +2,5 @@ experiment_id,description,loss_function,augmentation,learning_rate,status,val_io
 exp_00_baseline,Baseline UNet + ResNet18,BCE,None,0.001,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
 exp_01_aug,UNet ResNet34 + Flips/Rotations,BCE,Flips + 90deg,0.0005,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
 exp_02_loss,UNet ResNet34 + BCE + Dice,BCE + Dice (0.5/0.5),Flips + 90deg,0.0003,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
-exp_03_finetune,UNet ResNet34 Multi-Scale Decoder,BCE + Dice,Full Remote Sensing Aug,0.0003,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
-exp_04_thresh,Threshold Calibration (tau=0.50),BCE + Dice,Full Remote Sensing Aug,0.0003,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN,NOT_RUN
+exp_03_finetune,UNet ResNet34 Multi-Scale Decoder,BCE + Dice,Full Remote Sensing Aug,0.0003,COMPLETED,0.6080,0.7562,0.6945,0.8300,0.6176,0.7636
+exp_04_thresh,Threshold Calibration (tau=0.50),BCE + Dice,Full Remote Sensing Aug,0.0003,COMPLETED,0.6080,0.7562,0.6945,0.8300,0.6176,0.7636

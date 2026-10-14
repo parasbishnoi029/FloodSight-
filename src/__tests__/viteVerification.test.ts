@@ -1,7 +1,5 @@
-/**
- * Test suite for FastAPI-like verification and inference-blocking logic in vite.config.ts
- */
 import { createFloodsightMiddleware, VERIFIED_REGISTRY } from '../server/floodsightMiddleware';
+import { calculateHectares, isValidGeospatial, haversineDistanceMeters, generateFloodGeoJson } from '../utils/geospatial';
 import { EventEmitter } from 'events';
 import path from 'path';
 
@@ -101,8 +99,133 @@ function buildMultipart(
   };
 }
 
+function createTestGeoTiff(mode: 'all_flood' | 'no_flood' | 'mixed', isGeo = false): Buffer {
+  const width = 512;
+  const height = 512;
+  const numTags = 14;
+  const headerSize = 8;
+  const ifdSize = 2 + numTags * 12 + 4;
+  const dataOffset = headerSize + ifdSize + 256;
+  const samples = 3;
+  const bytesPerSample = 2;
+  const rasterBytes = width * height * samples * bytesPerSample;
+  const buf = Buffer.alloc(dataOffset + rasterBytes, 0);
+
+  buf.writeUInt16LE(0x4949, 0);
+  buf.writeUInt16LE(42, 2);
+  buf.writeUInt32LE(8, 4);
+
+  let offset = 8;
+  buf.writeUInt16LE(numTags, offset);
+  offset += 2;
+
+  const extraOffset = headerSize + ifdSize;
+  const writeTag = (tag: number, type: number, count: number, valOrOffset: number) => {
+    buf.writeUInt16LE(tag, offset);
+    buf.writeUInt16LE(type, offset + 2);
+    buf.writeUInt32LE(count, offset + 4);
+    buf.writeUInt32LE(valOrOffset, offset + 8);
+    offset += 12;
+  };
+
+  writeTag(256, 4, 1, width);
+  writeTag(257, 4, 1, height);
+  writeTag(258, 3, 3, extraOffset);
+  writeTag(259, 3, 1, 1);
+  writeTag(262, 3, 1, 2);
+  writeTag(273, 4, 1, dataOffset);
+  writeTag(277, 3, 1, samples);
+  writeTag(278, 4, 1, height);
+  writeTag(279, 4, 1, rasterBytes);
+  writeTag(282, 5, 1, extraOffset + 16);
+  writeTag(283, 5, 1, extraOffset + 24);
+  writeTag(33550, 12, 3, extraOffset + 32);
+  writeTag(33922, 12, 6, extraOffset + 64);
+  writeTag(34735, 3, 8, extraOffset + 120);
+
+  buf.writeUInt32LE(0, offset);
+
+  // Extra values
+  buf.writeUInt16LE(16, extraOffset);
+  buf.writeUInt16LE(16, extraOffset + 2);
+  buf.writeUInt16LE(16, extraOffset + 4);
+
+  if (isGeo) {
+    const scaleDeg = 8.983152841195215e-5;
+    buf.writeDoubleLE(scaleDeg, extraOffset + 32);
+    buf.writeDoubleLE(scaleDeg, extraOffset + 40);
+    buf.writeDoubleLE(0.0, extraOffset + 48);
+
+    buf.writeDoubleLE(0.0, extraOffset + 64);
+    buf.writeDoubleLE(0.0, extraOffset + 72);
+    buf.writeDoubleLE(0.0, extraOffset + 80);
+    buf.writeDoubleLE(-0.37, extraOffset + 88);
+    buf.writeDoubleLE(39.5, extraOffset + 96); // 39.5° N in Spain
+    buf.writeDoubleLE(0.0, extraOffset + 104);
+  } else {
+    buf.writeDoubleLE(10.0, extraOffset + 32);
+    buf.writeDoubleLE(10.0, extraOffset + 40);
+    buf.writeDoubleLE(0.0, extraOffset + 48);
+
+    buf.writeDoubleLE(0.0, extraOffset + 64);
+    buf.writeDoubleLE(0.0, extraOffset + 72);
+    buf.writeDoubleLE(0.0, extraOffset + 80);
+    buf.writeDoubleLE(500000.0, extraOffset + 88);
+    buf.writeDoubleLE(4000000.0, extraOffset + 96);
+    buf.writeDoubleLE(0.0, extraOffset + 104);
+  }
+
+  let px = dataOffset;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let b4 = 1420;
+      let b3 = 1150;
+      let b2 = 620;
+      if (mode === 'all_flood') {
+        b4 = 320; b3 = 640; b2 = 980;
+      } else if (mode === 'no_flood') {
+        b4 = 1420; b3 = 1150; b2 = 620;
+      } else {
+        const dist = Math.abs((x / width) - 0.5);
+        if (dist < 0.12) {
+          b4 = 320; b3 = 640; b2 = 980;
+        }
+      }
+      buf.writeUInt16LE(b4, px);
+      buf.writeUInt16LE(b3, px + 2);
+      buf.writeUInt16LE(b2, px + 4);
+      px += 6;
+    }
+  }
+
+  return buf;
+}
+
+import fs from 'fs';
+
+const rootCheckpointPath = path.resolve(__dirname, '../../models/flood_segmentation/floodsight_unet_resnet34_best.pth');
+let createdByTest = false;
+
 describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
   let middleware: any;
+
+  beforeAll(() => {
+    if (!fs.existsSync(rootCheckpointPath)) {
+      fs.mkdirSync(path.dirname(rootCheckpointPath), { recursive: true });
+      fs.writeFileSync(rootCheckpointPath, 'SYNTHETIC_TEST_CHECKPOINT_FIXTURE_FOR_UNIT_TESTING_ONLY');
+      createdByTest = true;
+    }
+  });
+
+  afterAll(() => {
+    if (createdByTest && fs.existsSync(rootCheckpointPath)) {
+      try {
+        fs.unlinkSync(rootCheckpointPath);
+      } catch {
+        // ignore cleanup error
+      }
+    }
+  });
 
   beforeEach(() => {
     VERIFIED_REGISTRY.clear();
@@ -355,6 +478,45 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
       expect(record.has_geotags).toBe(true);
       expect(record.pixel_scale).toEqual([10.0, 10.0, 0.0]);
     });
+
+    it('issues stateless HMAC-SHA256 signed_token and recovers verification state across in-memory cache clear', async () => {
+      const tiffBuffer = Buffer.alloc(12000, 0x00);
+      tiffBuffer[0] = 0x49;
+      tiffBuffer[1] = 0x49;
+      tiffBuffer[2] = 0x2a;
+      tiffBuffer[3] = 0x00;
+
+      const mp = buildMultipart({}, {
+        name: 'file',
+        filename: 'stateless_scene.tif',
+        buffer: tiffBuffer,
+      });
+
+      const res = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': mp.contentType },
+        body: mp.buffer,
+      });
+
+      const data = res.json();
+      expect(data.signed_token).toBeDefined();
+      expect(data.signed_token.startsWith('fs1.')).toBe(true);
+
+      // Simulate dev server HMR reload or in-memory TTL eviction
+      VERIFIED_REGISTRY.clear();
+      expect(VERIFIED_REGISTRY.size).toBe(0);
+
+      // Verifying signed token recovers the record
+      expect(VERIFIED_REGISTRY.has(data.signed_token)).toBe(true);
+      const recovered = VERIFIED_REGISTRY.get(data.signed_token)!;
+      expect(recovered.status).toBe('VERIFIED_SATELLITE_INPUT');
+      expect(recovered.accepted).toBe(true);
+
+      // Tampered token must fail
+      const tamperedToken = data.signed_token.slice(0, -4) + 'abcd';
+      expect(VERIFIED_REGISTRY.has(tamperedToken)).toBe(false);
+    });
   });
 
   describe('4. Inference-Blocking Logic When No Checkpoint Is Present (/api/analyze & /api/health)', () => {
@@ -572,6 +734,158 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
       expect(data.physical_area_ha).toBeGreaterThan(0);
       expect(data.area_calculation_method).toBe('GEOTIFF_AFFINE_GSD_10M');
     });
+
+    it('regression: correctly classifies an all-flood scene as 100% coverage', async () => {
+      const allFloodBuf = createTestGeoTiff('all_flood');
+      const mpVerify = buildMultipart({}, {
+        name: 'file',
+        filename: 'all_flood_scene.tif',
+        buffer: allFloodBuf,
+      });
+      const vRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': mpVerify.contentType },
+        body: mpVerify.buffer,
+      });
+      const vData = vRes.json();
+
+      const mpAnalyze = buildMultipart({
+        verification_id: vData.verification_id,
+        threshold: '0.5',
+      }, {
+        name: 'file',
+        filename: 'all_flood_scene.tif',
+        buffer: allFloodBuf,
+      });
+      const aRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/analyze',
+        headers: { 'content-type': mpAnalyze.contentType },
+        body: mpAnalyze.buffer,
+      });
+
+      expect(aRes.statusCode).toBe(200);
+      const aData = aRes.json();
+      expect(aData.flood_detected).toBe(true);
+      expect(aData.coverage_percent).toBe(100);
+      expect(aData.flood_pixel_count).toBe(262144);
+      expect(aData.physical_area_ha).toBe(2621.44);
+    });
+
+    it('regression: correctly classifies a no-flood scene as 0% coverage and flood_detected false', async () => {
+      const noFloodBuf = createTestGeoTiff('no_flood');
+      const mpVerify = buildMultipart({}, {
+        name: 'file',
+        filename: 'no_flood_scene.tif',
+        buffer: noFloodBuf,
+      });
+      const vRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': mpVerify.contentType },
+        body: mpVerify.buffer,
+      });
+      const vData = vRes.json();
+
+      const mpAnalyze = buildMultipart({
+        verification_id: vData.verification_id,
+        threshold: '0.5',
+      }, {
+        name: 'file',
+        filename: 'no_flood_scene.tif',
+        buffer: noFloodBuf,
+      });
+      const aRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/analyze',
+        headers: { 'content-type': mpAnalyze.contentType },
+        body: mpAnalyze.buffer,
+      });
+
+      expect(aRes.statusCode).toBe(200);
+      const aData = aRes.json();
+      expect(aData.flood_detected).toBe(false);
+      expect(aData.coverage_percent).toBe(0);
+      expect(aData.flood_pixel_count).toBe(0);
+      expect(aData.physical_area_ha).toBe(0);
+    });
+
+    it('regression: correctly classifies a mixed scene with river channel (~24% coverage)', async () => {
+      const mixedBuf = createTestGeoTiff('mixed');
+      const mpVerify = buildMultipart({}, {
+        name: 'file',
+        filename: 'mixed_scene.tif',
+        buffer: mixedBuf,
+      });
+      const vRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': mpVerify.contentType },
+        body: mpVerify.buffer,
+      });
+      const vData = vRes.json();
+
+      const mpAnalyze = buildMultipart({
+        verification_id: vData.verification_id,
+        threshold: '0.5',
+      }, {
+        name: 'file',
+        filename: 'mixed_scene.tif',
+        buffer: mixedBuf,
+      });
+      const aRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/analyze',
+        headers: { 'content-type': mpAnalyze.contentType },
+        body: mpAnalyze.buffer,
+      });
+
+      expect(aRes.statusCode).toBe(200);
+      const aData = aRes.json();
+      expect(aData.flood_detected).toBe(true);
+      expect(aData.coverage_percent).toBe(24.02);
+      expect(aData.flood_pixel_count).toBe(62976);
+      expect(aData.physical_area_ha).toBe(629.76);
+    });
+
+    it('regression: correctly applies geodesic WGS84 area calculation for geographic degree CRS at latitude', async () => {
+      const geoBuf = createTestGeoTiff('mixed', true);
+      const mpVerify = buildMultipart({}, {
+        name: 'file',
+        filename: 'spain_geo_scene.tif',
+        buffer: geoBuf,
+      });
+      const vRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': mpVerify.contentType },
+        body: mpVerify.buffer,
+      });
+      const vData = vRes.json();
+
+      const mpAnalyze = buildMultipart({
+        verification_id: vData.verification_id,
+        threshold: '0.5',
+      }, {
+        name: 'file',
+        filename: 'spain_geo_scene.tif',
+        buffer: geoBuf,
+      });
+      const aRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/analyze',
+        headers: { 'content-type': mpAnalyze.contentType },
+        body: mpAnalyze.buffer,
+      });
+
+      expect(aRes.statusCode).toBe(200);
+      const aData = aRes.json();
+      expect(aData.flood_detected).toBe(true);
+      expect(aData.area_calculation_method).toContain('GEODESIC_WGS84_LAT_39.50N');
+      // At latitude 39.5° N, cos(39.5°) is ~0.7716, so area is ~484.85 ha instead of 629.76 ha
+      expect(aData.physical_area_ha).toBeCloseTo(484.85, 0);
+    });
   });
 
   describe('5. Module Script Loading & API Routing Connectivity', () => {
@@ -695,4 +1009,121 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
       expect(res403.body).not.toContain('<!doctype html>');
     });
   });
+
+  describe('Centralized Geospatial Utilities (src/utils/geospatial.ts)', () => {
+    it('isValidGeospatial correctly validates geospatial metadata presence and structure', () => {
+      expect(isValidGeospatial(null)).toBe(false);
+      expect(isValidGeospatial({ has_geotags: false })).toBe(false);
+      expect(isValidGeospatial({ has_geotags: true, crs_type: 'UNREFERENCED' })).toBe(false);
+      expect(
+        isValidGeospatial({
+          has_geotags: true,
+          crs_type: 'GEOGRAPHIC_DEGREE',
+          pixel_scale: [0.00008983, 0.00008983, 0],
+        })
+      ).toBe(true);
+      expect(
+        isValidGeospatial({
+          has_geotags: true,
+          crs_type: 'PROJECTED_METER',
+          pixel_scale: [10, 10, 0],
+        })
+      ).toBe(true);
+    });
+
+    it('haversineDistanceMeters accurately measures ground distance between lat/lon points', () => {
+      // Distance between (0, 0) and (0, 1) degree longitude along equator is ~111,195m
+      const distMeters = haversineDistanceMeters(0, 0, 0, 1);
+      expect(distMeters).toBeGreaterThan(111000);
+      expect(distMeters).toBeLessThan(112000);
+    });
+
+    it('calculateHectares handles geographic degree CRS using WGS84 geodesic formula', () => {
+      const pixelCount = 100;
+      const pixelScale = [0.00008983152841195215, 0.00008983152841195215]; // ~10m x 10m at equator
+      const area = calculateHectares(pixelCount, pixelScale, { origin_lat: 0 }, 'GEOGRAPHIC_DEGREE');
+      expect(area).not.toBeNull();
+      expect(area).toBeCloseTo(1.0, 1); // 100 pixels * 0.01 ha/pixel = ~1.0 ha
+    });
+
+    it('calculateHectares calculates ~723.3 ha for Ghana sample (73,400 pixels at Lat 9.01° N)', () => {
+      const pixelCount = 73400;
+      const pixelScale = [0.00008983152841195215, 0.00008983152841195215]; // ~10m x 10m at equator
+      const area = calculateHectares(pixelCount, pixelScale, { origin_lat: 9.01 }, 'GEOGRAPHIC_DEGREE');
+      expect(area).not.toBeNull();
+      expect(area).toBeCloseTo(723.3, 0);
+    });
+
+    it('returns crs_type, origin_lat, origin_lon, angular_resolution_deg, approx_ground_resolution_m, file_hash_sha256, and checkpoint_hash from /api/analyze', async () => {
+      const geoTiffBuf = createTestGeoTiff('mixed', true);
+      const verifyMp = buildMultipart({}, { name: 'file', filename: 'Ghana_97059_S2Hand.tif', buffer: geoTiffBuf });
+      const verifyRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/verify-image',
+        headers: { 'content-type': verifyMp.contentType },
+        body: verifyMp.buffer,
+      });
+
+      expect(verifyRes.statusCode).toBe(200);
+      const verifyData = verifyRes.json();
+      expect(verifyData.status).toBe('VERIFIED_SATELLITE_INPUT');
+
+      const analyzeMp = buildMultipart(
+        { verification_id: verifyData.verification_id, threshold: '0.5' },
+        { name: 'file', filename: 'Ghana_97059_S2Hand.tif', buffer: geoTiffBuf }
+      );
+      const analyzeRes = await executeMiddleware(middleware, {
+        method: 'POST',
+        url: '/api/analyze',
+        headers: { 'content-type': analyzeMp.contentType },
+        body: analyzeMp.buffer,
+      });
+
+      expect(analyzeRes.statusCode).toBe(200);
+      const analyzeData = analyzeRes.json();
+      expect(analyzeData.status).toBe('SUCCESS');
+      expect(analyzeData.crs_type).toBe('GEOGRAPHIC_DEGREE');
+      expect(analyzeData.origin_lat).toBe(39.5);
+      expect(analyzeData.origin_lon).toBe(-0.37);
+      expect(analyzeData.angular_resolution_deg).toBeDefined();
+      expect(analyzeData.approx_ground_resolution_m).toBeDefined();
+      expect(analyzeData.checkpoint_hash).toBe('7b8d9e0b2a8e9db2162732a0632cb8a5f4b35b8a1777afca8880798869e4d436');
+      expect(analyzeData.file_hash_sha256).toBeDefined();
+    });
+
+    it('generateFloodGeoJson produces valid FeatureCollection with provenance properties', () => {
+      const zones = [{
+        zone_id: 1,
+        category: 'MAJOR_INUNDATION_BODY',
+        pixel_count: 500,
+        area_ha: 5.0,
+        mean_probability: 0.92,
+        geographic_bounds: { north: 40.0, south: 39.0, east: 1.0, west: 0.0 }
+      }];
+      const geoMeta = { has_geotags: true, crs_type: 'GEOGRAPHIC_DEGREE', epsg_urn: 'urn:ogc:def:crs:EPSG::4326', pixel_scale: [0.001, 0.001], tie_point: null, origin_lat: 40.0, origin_lon: 0.0, pixel_area_ha: 0.01, method: 'GEODESIC', notes: '' };
+      const provenance = { analysis_id: 'a1', verification_id: 'v1', file_hash_sha256: 'h1', threshold: 0.5, physical_area_ha: 5.0 };
+
+      const geojson = generateFloodGeoJson(zones, geoMeta, provenance);
+      expect(geojson.type).toBe('FeatureCollection');
+      expect(geojson.features.length).toBe(1);
+      expect(geojson.features[0].properties.zone_id).toBe(1);
+      expect(geojson.features[0].properties.analysis_id).toBe('a1');
+      expect(geojson.features[0].properties.physical_area_ha).toBe(5.0);
+    });
+
+    it('GET /api/external/osm-infrastructure and /api/external/elevation handle missing query parameters gracefully', async () => {
+      const resInfra = await executeMiddleware(middleware, {
+        method: 'GET',
+        url: '/api/external/osm-infrastructure',
+      });
+      expect(resInfra.statusCode).toBe(400);
+
+      const resElev = await executeMiddleware(middleware, {
+        method: 'GET',
+        url: '/api/external/elevation',
+      });
+      expect(resElev.statusCode).toBe(400);
+    });
+  });
 });
+

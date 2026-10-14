@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { motion } from 'motion/react';
 import { verifySatelliteImage, runVerifiedFloodAnalysis } from '../services/api';
 import { 
   VerificationResponse, 
@@ -6,6 +7,7 @@ import {
   NavigationTab,
   HealthStatus
 } from '../types';
+import { calculateHectares, isValidGeospatial, generateFloodGeoJson } from '../utils/geospatial';
 import { SensorSwathScanner3D, ExtrudedFloodTerrainR3F } from '../components/3d';
 import { GLOBAL_DISASTERS, GlobalDisasterLocation } from '../data/globalDisasters';
 import { DataQualityPanel } from '../components/common/DataQualityPanel';
@@ -30,7 +32,8 @@ import {
   Sparkles,
   MapPin,
   Mountain,
-  Globe
+  Globe,
+  Download
 } from 'lucide-react';
 
 interface AnalyzeProps {
@@ -53,6 +56,77 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
   const [threshold, setThreshold] = useState<number>(0.50);
   const [analysisResult, setAnalysisResult] = useState<FloodAnalysisResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [osmInfra, setOsmInfra] = useState<any | null>(null);
+
+  React.useEffect(() => {
+    if (!analysisResult) return;
+    if (analysisResult.crs_type === 'UNREFERENCED' || analysisResult.origin_lat == null || analysisResult.origin_lon == null) {
+      setOsmInfra({
+        status: 'SOURCE_UNAVAILABLE',
+        provenance: 'OPENSTREETMAP OVERPASS (UNREFERENCED SCENE)',
+        submerged_road_km: null,
+        affected_bridges_count: null,
+        isolated_settlements: []
+      });
+      return;
+    }
+
+    const lat = analysisResult.origin_lat;
+    const lon = analysisResult.origin_lon;
+    const d = 0.02;
+    const south = lat - d;
+    const north = lat + d;
+    const west = lon - d;
+    const east = lon + d;
+
+    fetch(`/api/external/osm-infrastructure?south=${south.toFixed(4)}&west=${west.toFixed(4)}&north=${north.toFixed(4)}&east=${east.toFixed(4)}`)
+      .then(res => res.json())
+      .then(data => setOsmInfra(data))
+      .catch(() => setOsmInfra({
+        status: 'SOURCE_UNAVAILABLE',
+        provenance: 'OPENSTREETMAP OVERPASS (SOURCE UNAVAILABLE)',
+        submerged_road_km: null,
+        affected_bridges_count: null,
+        isolated_settlements: []
+      }));
+  }, [analysisResult]);
+
+  const handleDownloadGeoJson = () => {
+    if (!analysisResult) return;
+    const zones = analysisResult.spatial_zones || [];
+    const geoMeta = {
+      has_geotags: analysisResult.crs_type !== 'UNREFERENCED',
+      crs_type: analysisResult.crs_type || 'UNREFERENCED',
+      epsg_code: analysisResult.epsg_code || null,
+      epsg_urn: analysisResult.epsg_urn || null,
+      pixel_scale: analysisResult.pixel_scale || null,
+      tie_point: null,
+      origin_lat: analysisResult.origin_lat ?? null,
+      origin_lon: analysisResult.origin_lon ?? null,
+      pixel_area_ha: null,
+      method: analysisResult.area_calculation_method || 'WGS84_ROW_INTEGRATED_ELLIPSOIDAL',
+      notes: ''
+    };
+    const provenance = {
+      analysis_id: analysisResult.analysis_id,
+      verification_id: analysisResult.verification_id,
+      file_hash_sha256: analysisResult.file_hash_sha256,
+      threshold: analysisResult.threshold_used,
+      physical_area_ha: analysisResult.physical_area_ha,
+      area_calculation_method: analysisResult.area_calculation_method || 'WGS84_ROW_INTEGRATED_ELLIPSOIDAL'
+    };
+
+    const geojson = generateFloodGeoJson(zones, geoMeta, provenance);
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `flood_mask_${analysisResult.analysis_id || 'scene'}.geojson`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -136,7 +210,12 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <motion.div 
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 text-left"
+    >
       
       {/* Workspace Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-5">
@@ -155,7 +234,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs font-mono text-slate-300 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800">
+        <div className="flex items-center gap-2 text-xs font-mono text-slate-300 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-800">
           <Satellite className={`w-3.5 h-3.5 ${health?.model_available ? 'text-cyan-400' : 'text-amber-400'}`} />
           <span>MODEL: FloodSight-UNet-ResNet34</span>
           <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
@@ -175,7 +254,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
         <div className="lg:col-span-6 space-y-6">
           
           {/* Quick Select Benchmark Chips with Continent Filter */}
-          <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 space-y-3">
+          <div className="p-4 rounded-2xl glass-panel space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-mono font-bold text-slate-200 flex items-center gap-1.5">
                 <Globe className="w-3.5 h-3.5 text-cyan-400" />
@@ -192,7 +271,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                   onClick={() => setSelectedContinent(cont)}
                   className={`px-2 py-0.5 text-[10px] font-mono rounded transition-colors cursor-pointer ${
                     selectedContinent === cont
-                      ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/50'
+                      ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/50 font-bold'
                       : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
                   }`}
                 >
@@ -207,15 +286,15 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                 <button
                   key={sample.id}
                   onClick={() => handleLoadSample(sample)}
-                  className={`p-2.5 rounded text-left text-xs font-mono transition-colors flex items-start gap-2 cursor-pointer border ${
+                  className={`p-2.5 rounded-xl text-left text-xs font-mono transition-colors flex items-start gap-2 cursor-pointer border ${
                     selectedHotspot?.id === sample.id
                       ? 'bg-cyan-950/80 border-cyan-500/80 text-white font-bold'
                       : 'bg-slate-950 hover:bg-cyan-950/40 text-slate-300 hover:text-cyan-300 border-slate-800'
                   }`}
                 >
                   <MapPin className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
-                  <div className="truncate">
-                    <div className="font-semibold truncate">{sample.country}: {sample.name}</div>
+                  <div className="min-w-0">
+                    <div className="font-semibold leading-snug">{sample.country}: {sample.name}</div>
                     <div className="text-[10px] text-slate-400 truncate">{sample.benchmarkChipName}</div>
                   </div>
                 </button>
@@ -225,8 +304,8 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
           {/* Selected Hotspot Specifications Card */}
           {selectedHotspot && (
-            <div className="p-4 rounded-xl bg-slate-950/90 border border-cyan-800/60 space-y-2 text-xs font-mono">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+            <div className="p-4 rounded-2xl glass-panel-cyan space-y-2 text-xs font-mono">
+              <div className="flex items-center justify-between border-b border-cyan-500/20 pb-2">
                 <span className="font-bold text-cyan-300 flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-cyan-400" />
                   {selectedHotspot.country}: {selectedHotspot.name}
@@ -256,7 +335,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
               onDragLeave={() => setIsDragging(false)}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all relative group ${
+              className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all relative group ${
                 isDragging
                   ? 'border-cyan-400 bg-cyan-950/30'
                   : 'border-slate-800 hover:border-cyan-500/60 bg-slate-950/60 hover:bg-slate-950/90'
@@ -275,7 +354,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
               />
 
               <div className="flex flex-col items-center justify-center space-y-3">
-                <div className="w-12 h-12 rounded-full bg-cyan-950/80 text-cyan-400 border border-cyan-500/30 flex items-center justify-center">
+                <div className="w-12 h-12 rounded-2xl bg-cyan-950/80 text-cyan-400 border border-cyan-500/30 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.2)]">
                   <Satellite className="w-6 h-6" />
                 </div>
                 <div className="space-y-1">
@@ -286,14 +365,14 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                     Supports Sentinel-2 GeoTIFF (.tif) or Optical True-Color RGB (Max 50 MB)
                   </p>
                 </div>
-                <span className="px-3.5 py-1.5 text-xs font-mono font-semibold rounded bg-slate-800 text-cyan-300 border border-slate-700">
+                <span className="px-3.5 py-1.5 text-xs font-mono font-semibold rounded-xl bg-slate-800 text-cyan-300 border border-slate-700">
                   Select Local File
                 </span>
               </div>
             </div>
           ) : (
             /* Selected File Card */
-            <div className="p-5 rounded-xl bg-slate-950/90 border border-slate-800 space-y-4">
+            <div className="p-5 rounded-2xl glass-panel space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2 text-xs font-mono font-bold text-white">
                   <FileCheck className="w-4 h-4 text-cyan-400" />
@@ -324,7 +403,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                 <button
                   onClick={handleVerify}
                   disabled={isVerifying}
-                  className="w-full py-3 px-4 text-xs font-mono font-bold uppercase rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="w-full py-3.5 px-4 text-xs font-mono font-bold uppercase rounded-xl bg-gradient-to-r from-cyan-500 to-sky-400 hover:from-cyan-400 hover:to-sky-300 text-slate-950 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-[0_0_20px_rgba(6,182,212,0.3)]"
                 >
                   {isVerifying ? (
                     <>
@@ -344,7 +423,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
           {/* Verification Verdict Box */}
           {verificationResult && (
-            <div className="p-5 rounded-xl bg-slate-950 border border-slate-800 space-y-4">
+            <div className="p-5 rounded-2xl glass-panel space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <span className="text-xs font-mono font-bold text-slate-300 uppercase">
                   System Verification Result
@@ -364,52 +443,52 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
               {/* Real Check Checklist */}
               <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                <div className="p-2 rounded bg-slate-900/60 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 flex items-center justify-between">
                   <span className="text-slate-400">File Integrity:</span>
                   <span className={verificationResult.checks.file_integrity.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {verificationResult.checks.file_integrity.passed ? '✓ Valid' : '✕ Corrupt'}
                   </span>
                 </div>
 
-                <div className="p-2 rounded bg-slate-900/60 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 flex items-center justify-between">
                   <span className="text-slate-400">Image Decoding:</span>
                   <span className={verificationResult.checks.image_decode.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {verificationResult.checks.image_decode.passed ? '✓ Decoded' : '✕ Error'}
                   </span>
                 </div>
 
-                <div className="p-2 rounded bg-slate-900/60 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 flex items-center justify-between">
                   <span className="text-slate-400">Dimensions:</span>
                   <span className={verificationResult.checks.dimensions.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {verificationResult.checks.dimensions.passed ? '✓ 512×512' : '✕ Out of bounds'}
                   </span>
                 </div>
 
-                <div className="p-2 rounded bg-slate-900/60 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 flex items-center justify-between">
                   <span className="text-slate-400">Channel Count:</span>
                   <span className={verificationResult.checks.channels.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {verificationResult.checks.channels.passed ? '✓ 3 Optical' : '✕ Mismatch'}
                   </span>
                 </div>
 
-                <div className="p-2 rounded bg-slate-900/60 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 flex items-center justify-between">
                   <span className="text-slate-400">Data Type:</span>
                   <span className={verificationResult.checks.dtype.passed ? 'text-emerald-400' : 'text-rose-400'}>
                     {verificationResult.checks.dtype.passed ? '✓ Float32' : '✕ Incompatible'}
                   </span>
                 </div>
 
-                <div className="p-2 rounded bg-slate-900/60 flex items-center justify-between">
+                <div className="p-2.5 rounded-xl bg-slate-900/60 flex items-center justify-between">
                   <span className="text-slate-400">Geospatial CRS:</span>
                   <span className={verificationResult.checks.geospatial_metadata.passed ? 'text-emerald-400' : 'text-amber-400'}>
-                    {verificationResult.checks.geospatial_metadata.passed ? '✓ 10m GeoTIFF' : 'Unreferenced'}
+                    {verificationResult.checks.geospatial_metadata.passed ? '✓ Georeferenced' : 'Unreferenced'}
                   </span>
                 </div>
               </div>
 
               {/* Warning Notice for Unreferenced Images */}
               {verificationResult.warnings.length > 0 && (
-                <div className="p-3 rounded bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200/90 space-y-1">
+                <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200/90 space-y-1">
                   <div className="flex items-center gap-1.5 font-bold">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
                     <span>Provenance Warning:</span>
@@ -422,7 +501,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
               {/* Rejection Notice */}
               {!verificationResult.accepted_for_inference && (
-                <div className="p-3 rounded bg-rose-950/60 border border-rose-800 text-xs text-rose-200 space-y-1">
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-xs text-rose-200 space-y-1">
                   <div className="flex items-center gap-1.5 font-bold">
                     <AlertCircle className="w-3.5 h-3.5 text-rose-400" />
                     <span>Input Rejected:</span>
@@ -451,7 +530,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                   />
 
                   {health && !health.model_available && (
-                    <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200/90 space-y-1">
+                    <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200/90 space-y-1">
                       <div className="flex items-center gap-1.5 font-bold text-amber-300">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
                         <span>Zero-Fabrication Enforcement:</span>
@@ -465,7 +544,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                   <button
                     onClick={handleRunInference}
                     disabled={isInferring || Boolean(health && !health.model_available)}
-                    className={`w-full py-3.5 px-4 text-xs font-mono font-bold uppercase rounded transition-all flex items-center justify-center gap-2 ${
+                    className={`w-full py-3.5 px-4 text-xs font-mono font-bold uppercase rounded-xl transition-all flex items-center justify-center gap-2 ${
                       health && !health.model_available
                         ? 'bg-slate-900 border border-amber-900/60 text-amber-300/80 cursor-not-allowed opacity-80'
                         : isInferring
@@ -497,7 +576,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
           {/* Error Banner */}
           {errorMsg && (
-            <div className={`p-4 rounded-lg text-xs flex items-start gap-2.5 ${
+            <div className={`p-4 rounded-xl text-xs flex items-start gap-2.5 ${
               errorMsg.includes('FLOOD_MODEL_UNAVAILABLE')
                 ? 'bg-amber-950/60 border border-amber-800 text-amber-200'
                 : 'bg-rose-950/60 border border-rose-800 text-rose-200'
@@ -533,20 +612,35 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
           {/* Segmentation Results Panel */}
           {analysisResult && (
-            <div className="p-6 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-5 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="p-6 rounded-2xl glass-panel space-y-5 shadow-2xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2 text-xs font-mono text-cyan-300 font-bold">
                   <CheckCircle2 className="w-4 h-4 text-cyan-400" />
                   <span>FLOOD SEGMENTATION COMPLETED</span>
                 </div>
-                <span className="text-[10px] font-mono text-slate-400">
-                  Latency: {analysisResult.inference_latency_ms} ms (CPU)
-                </span>
+                <div className="flex items-center gap-3 text-[10px] font-mono text-slate-400">
+                  <span>Latency: <strong className="text-slate-200">{analysisResult.inference_latency_ms} ms</strong></span>
+                  <span className="text-slate-600">·</span>
+                  <span>Threshold: <strong className="text-slate-200">{analysisResult.threshold_used}</strong></span>
+                </div>
+              </div>
+
+              {/* Provenance and Current Analysis Identity Bar */}
+              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px] font-mono grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <span className="text-slate-500 uppercase block text-[9px]">Analysis Run ID</span>
+                  <span className="text-cyan-300 font-bold select-all break-all">{analysisResult.analysis_id}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 uppercase block text-[9px]">Input Scene & Verified Token</span>
+                  <span className="text-slate-300 truncate block">{analysisResult.filename}</span>
+                  <span className="text-slate-500 text-[10px] select-all truncate block">Token: {analysisResult.verification_id}</span>
+                </div>
               </div>
 
               {/* Metrics Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
-                <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                   <span className="text-[10px] uppercase text-slate-400 block">Flood Surface</span>
                   <span className="text-base font-bold text-cyan-400 tabular-nums">
                     {analysisResult.coverage_percent}%
@@ -556,7 +650,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                   </span>
                 </div>
 
-                <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                   <span className="text-[10px] uppercase text-slate-400 block">Flood Pixels</span>
                   <span className="text-base font-bold text-white tabular-nums">
                     {analysisResult.flood_pixel_count.toLocaleString()}
@@ -566,7 +660,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                   </span>
                 </div>
 
-                <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                   <span className="text-[10px] uppercase text-slate-400 block">Confidence</span>
                   <span className="text-base font-bold text-emerald-400 tabular-nums">
                     {(analysisResult.confidence_mean * 100).toFixed(1)}%
@@ -574,7 +668,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                   <span className="text-[10px] text-slate-500 block">mean positive prob</span>
                 </div>
 
-                <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                   <span className="text-[10px] uppercase text-slate-400 block">Inundation Zones</span>
                   <span className="text-base font-bold text-white tabular-nums">
                     {analysisResult.connected_regions}
@@ -584,44 +678,130 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
               </div>
 
               {/* Physical Area Readout with Method and Resolution */}
-              <div className="p-4 rounded-lg bg-slate-900/60 border border-slate-800 space-y-2 text-xs font-mono">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Physical Inundated Area:</span>
-                  <span className="text-cyan-300 font-bold">
-                    {analysisResult.physical_area_ha !== null ? `${analysisResult.physical_area_ha} hectares` : 'NOT AVAILABLE'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>Calculation Method:</span>
-                  <span className="text-slate-300 font-mono">{analysisResult.area_calculation_method || 'NOT_CALCULATED'}</span>
-                </div>
-                {analysisResult.spatial_resolution_m && (
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span>Spatial GSD Resolution:</span>
-                    <span className="text-slate-300 font-mono">{analysisResult.spatial_resolution_m[0]}m × {analysisResult.spatial_resolution_m[1]}m</span>
+              {(() => {
+                const computedAreaHa = analysisResult
+                  ? (analysisResult.physical_area_ha ??
+                     calculateHectares(
+                       analysisResult.flood_pixel_count,
+                       analysisResult.pixel_scale,
+                       { origin_lat: analysisResult.origin_lat, origin_lon: analysisResult.origin_lon },
+                       analysisResult.crs_type,
+                       { originLat: analysisResult.origin_lat ?? undefined }
+                     ))
+                  : null;
+
+                return (
+                  <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2 text-xs font-mono">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Physical Inundated Area:</span>
+                      <span className="text-cyan-300 font-bold">
+                        {isValidGeospatial(analysisResult) && computedAreaHa !== null
+                          ? `${computedAreaHa} hectares`
+                          : 'NOT AVAILABLE'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>Calculation Method:</span>
+                      <span className="text-slate-300 font-mono">{analysisResult.area_calculation_method || 'NOT_CALCULATED'}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>CRS System:</span>
+                      <span className="text-slate-300 font-mono">{analysisResult.crs_type || 'UNREFERENCED'}</span>
+                    </div>
+                    {analysisResult.angular_resolution_deg && (
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Source Angular Scale:</span>
+                        <span className="text-slate-300 font-mono">
+                          {analysisResult.angular_resolution_deg[0].toFixed(8)}° × {analysisResult.angular_resolution_deg[1].toFixed(8)}°
+                        </span>
+                      </div>
+                    )}
+                    {analysisResult.approx_ground_resolution_m && (
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Approx. Ground Resolution:</span>
+                        <span className="text-slate-300 font-mono">
+                          ~{analysisResult.approx_ground_resolution_m[0]}m × ~{analysisResult.approx_ground_resolution_m[1]}m
+                        </span>
+                      </div>
+                    )}
+                    {analysisResult.projected_resolution_m && (
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Projected Ground GSD:</span>
+                        <span className="text-slate-300 font-mono">
+                          {analysisResult.projected_resolution_m[0]}m × {analysisResult.projected_resolution_m[1]}m
+                        </span>
+                      </div>
+                    )}
+                    <p className="text-[11px] text-slate-400 pt-1 border-t border-slate-800/80">
+                      {analysisResult.physical_area_notes}
+                    </p>
                   </div>
-                )}
-                <p className="text-[11px] text-slate-400 pt-1 border-t border-slate-800/80">
-                  {analysisResult.physical_area_notes}
-                </p>
-              </div>
+                );
+              })()}
+
+              {/* OpenStreetMap Overpass Live Vector Infrastructure Intersect Card */}
+              {osmInfra && (
+                <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2 text-xs font-mono">
+                  <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                    <span className="text-cyan-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
+                      <Globe className="w-3.5 h-3.5 text-cyan-400" />
+                      OSM Vector Infrastructure Intersect
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/60">
+                      {osmInfra.provenance}
+                    </span>
+                  </div>
+                  {osmInfra.status === 'SUCCESS' ? (
+                    <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                      <div>
+                        <span className="text-slate-400 block">Submerged Roads:</span>
+                        <span className="text-cyan-300 font-bold">{osmInfra.submerged_road_km ?? '0'} km</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block">Affected Bridges:</span>
+                        <span className="text-amber-400 font-bold">{osmInfra.affected_bridges_count ?? '0'} / {osmInfra.total_bridges_count ?? '0'}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-slate-400 block">Isolated Settlements:</span>
+                        <span className="text-slate-200">
+                          {osmInfra.isolated_settlements?.length > 0
+                            ? osmInfra.isolated_settlements.map((s: any) => s.name).join(', ')
+                            : 'None detected in bounding area'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-amber-400/90 pt-1">
+                      {osmInfra.provenance}: Road network intersection unavailable.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Data Quality & Source Integrity Panel */}
               <DataQualityPanel
                 locationName={selectedHotspot?.name || analysisResult.filename}
-                lat={selectedHotspot?.lat || 0}
-                lon={selectedHotspot?.lon || 0}
+                lat={selectedHotspot?.lat ?? analysisResult.origin_lat ?? null}
+                lon={selectedHotspot?.lon ?? analysisResult.origin_lon ?? null}
                 isModelAvailable={true}
               />
 
-              {/* Navigate to Tactical Map */}
-              <div className="pt-2 flex items-center justify-between">
-                <span className="text-xs font-mono text-slate-400">
-                  View full 3D extruded disaster map:
-                </span>
+              {/* GeoJSON Export Button & Navigate Bar */}
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={handleDownloadGeoJson}
+                  disabled={analysisResult.crs_type === 'UNREFERENCED'}
+                  title={analysisResult.crs_type === 'UNREFERENCED' ? 'Requires georeferenced GeoTIFF tags' : 'Export vector flood polygons as GeoJSON'}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-mono font-semibold rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 hover:text-cyan-200 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Download className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Download Flood Mask (.geojson)</span>
+                </button>
+
                 <button
                   onClick={() => onNavigate('map')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-mono font-semibold rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-colors cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-mono font-semibold rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-colors cursor-pointer"
                 >
                   <Mountain className="w-3.5 h-3.5" />
                   <span>Inspect in 3D Map</span>
@@ -662,6 +842,6 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
         </section>
       )}
 
-    </div>
+    </motion.div>
   );
 };

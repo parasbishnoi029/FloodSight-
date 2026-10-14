@@ -18,8 +18,8 @@ import { formatFreshness } from '../../services/dataFreshness';
 
 interface DataQualityPanelProps {
   locationName: string;
-  lat: number;
-  lon: number;
+  lat?: number | null;
+  lon?: number | null;
   hydrology?: HydrologyObservation | null;
   satelliteProduct?: SatelliteCatalogProduct | null;
   isModelAvailable?: boolean;
@@ -37,6 +37,8 @@ export const DataQualityPanel: React.FC<DataQualityPanelProps> = ({
   onRefresh,
   isRefreshing = false
 }) => {
+  const hasValidCoords = lat != null && lon != null && (lat !== 0 || lon !== 0);
+
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-xl backdrop-blur-md space-y-4">
       {/* Header */}
@@ -46,14 +48,18 @@ export const DataQualityPanel: React.FC<DataQualityPanelProps> = ({
             <ShieldCheck className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2 flex-wrap">
               Continuous Verification & Data Quality Audit
               <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                 Zero-Fabrication Mode
               </span>
+              <span className="text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3 text-cyan-400" />
+                Strict Scientific Governance
+              </span>
             </h3>
             <p className="text-xs text-slate-400">
-              Live provenance audit for {locationName} ({lat.toFixed(4)}°, {lon.toFixed(4)}°)
+              Live provenance audit for {locationName} {hasValidCoords ? `(${lat!.toFixed(4)}°, ${lon!.toFixed(4)}°)` : '(Unreferenced Coordinates)'}
             </p>
           </div>
         </div>

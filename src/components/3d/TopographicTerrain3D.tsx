@@ -5,17 +5,43 @@ import { Waves, Sliders, Eye, RotateCcw, Mountain } from 'lucide-react';
 interface TopographicTerrain3DProps {
   className?: string;
   initialWaterLevel?: number; // 0.0 to 1.0 normalized
+  bounds?: { south: number; west: number; north: number; east: number } | null;
 }
 
 export const TopographicTerrain3D: React.FC<TopographicTerrain3DProps> = ({
   className = '',
   initialWaterLevel = 0.35,
+  bounds = null,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const [waterLevel, setWaterLevel] = useState<number>(initialWaterLevel);
   const [wireframeMode, setWireframeMode] = useState<boolean>(false);
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
   const [webGlAvailable, setWebGlAvailable] = useState<boolean>(true);
+  const [demBadge, setDemBadge] = useState<string>('ILLUSTRATIVE PROCEDURAL RELIEF (NO VALIDATED DEM DETECTED)');
+
+  useEffect(() => {
+    if (!bounds || bounds.south == null) {
+      setDemBadge('ILLUSTRATIVE PROCEDURAL RELIEF (NO VALIDATED DEM DETECTED)');
+      return;
+    }
+
+    const fetchElev = async () => {
+      try {
+        const res = await fetch(`/api/external/elevation?south=${bounds.south}&west=${bounds.west}&north=${bounds.north}&east=${bounds.east}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'SUCCESS') {
+            setDemBadge('AUTHENTICATED DEM: COPERNICUS GLO-90 (OPEN-METEO)');
+            return;
+          }
+        }
+      } catch {}
+      setDemBadge('ILLUSTRATIVE PROCEDURAL RELIEF (NO VALIDATED DEM DETECTED)');
+    };
+
+    fetchElev();
+  }, [bounds]);
 
   // References to communicate with the active Three.js scene
   const waterMeshRef = useRef<THREE.Mesh | null>(null);
@@ -305,8 +331,8 @@ export const TopographicTerrain3D: React.FC<TopographicTerrain3DProps> = ({
               3D Digital Elevation Model
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 font-mono">
-            Procedural Topographic Inundation Simulator
+          <p className="text-[10px] text-cyan-300 font-mono font-semibold tracking-tight">
+            {demBadge}
           </p>
         </div>
 

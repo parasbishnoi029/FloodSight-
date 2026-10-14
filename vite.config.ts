@@ -36,6 +36,10 @@ export default defineConfig({
       process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || ''
     ),
   },
+  test: {
+    globals: true,
+    environment: 'node',
+  },
   server: {
     port: 3000,
     host: '0.0.0.0',
@@ -46,4 +50,5 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: true,
   },
-});
+} as any);
+

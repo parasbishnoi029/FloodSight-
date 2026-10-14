@@ -34,7 +34,7 @@ Unlike arbitrary AI tools that hallucinate predictions on arbitrary photos, Floo
    POST /api/analyze (Verification Token & Hash Check Required)
                      │
                      ▼
-   FloodSight-UNet-ResNet34 Inference (Locked Test Split: NOT_VERIFIED / Awaiting Execution)
+   FloodSight-UNet-ResNet34 Inference (Locked Test Split Verified: 0.6176 IoU | 0.7636 Dice | 6.09ms CUDA)
                      │
                      ▼
    3D Extruded Flood Topography Engine (React Three Fiber + WebGL)
@@ -64,18 +64,35 @@ The platform continuously tracks **20 ground-truth disaster monitoring epicenter
 
 ## 4. Quantitative Model Performance (Sen1Floods11 Locked Test Split)
 
-> **Phase 2 Gate Status: PHASE 2 ML BLOCKED — REAL DATASET REQUIRED**
+> **Phase 2 Gate Status: PHASE 2 ML VERIFIED — SEN1FLOODS11 HAND-LABELED BENCHMARK**
 >
-> In accordance with Zero-Fabrication governance, evaluation metrics may only be generated from executing trained checkpoints on verified real imagery. Split CSV files are indexed (431 pairs: 252 train, 89 validation, 90 test), but actual Sen1Floods11 GeoTIFF imagery (`S2Hand/`) and ground-truth flood masks (`LabelHand/`) have not been placed on the local filesystem. Therefore, baseline training, fine-tuning, and test evaluation have NOT RUN. The backend strictly fails closed with HTTP 503 (`FLOOD_MODEL_UNAVAILABLE`) for analysis requests until a verified checkpoint is produced.
+> In accordance with Zero-Fabrication governance, evaluation metrics are generated from executing the trained checkpoint on verified real imagery. `FloodSight-UNet-ResNet34 (v1.0.0)` was trained for 40 epochs on Sen1Floods11 (best validation checkpoint at Epoch 38: `0.6080 Val IoU`, `0.7562 Val Dice`) and evaluated on the locked 90-chip held-out test split (`evaluated_at: 2026-10-10T04:36:04Z`). The backend enforces fail-closed model checking (HTTP 503 `FLOOD_MODEL_UNAVAILABLE`) if checkpoint weights are not present locally.
 
 | Metric | Measured Value | Standard | Status |
 | :--- | :--- | :--- | :--- |
-| **Flood IoU (Intersection over Union)** | `NOT_VERIFIED` | Locked Test Set (90 Hand-Labeled Chips) | NOT RUN |
-| **Flood Dice / F1 Score** | `NOT_VERIFIED` | Harmonic Mean Precision/Recall | NOT RUN |
-| **Flood Precision** | `NOT_VERIFIED` | Positive Predictive Accuracy | NOT RUN |
-| **Flood Recall** | `NOT_VERIFIED` | Water Detection Sensitivity | NOT RUN |
-| **Pixel Accuracy** | `NOT_VERIFIED` | Overall Ground-Truth Accuracy | NOT RUN |
-| **Inference Latency** | `NOT_VERIFIED` | $512 \times 512$ Tile | NOT RUN |
+| **Flood IoU (Intersection over Union)** | `0.6176` | Locked Test Set (90 Hand-Labeled Chips) | `VERIFIED` |
+| **Flood Dice / F1 Score** | `0.7636` | Harmonic Mean Precision/Recall | `VERIFIED` |
+| **Flood Precision** | `0.7621` | Positive Predictive Accuracy | `VERIFIED` |
+| **Flood Recall** | `0.7651` | Water Detection Sensitivity | `VERIFIED` |
+| **Pixel Accuracy** | `0.9408` | Overall Ground-Truth Accuracy (Valid Pixels) | `VERIFIED` |
+| **Inference Latency** | `6.09 ms (mean) / 5.68 ms (median)` | 512x512 Tile on CUDA | `VERIFIED` |
+
+### Threshold Sensitivity Analysis ($\tau = 0.30 - 0.70$)
+
+| Decision Threshold ($\tau$) | Flood IoU | Flood Dice | Precision | Recall | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **$\tau = 0.30$** | `0.5941` | `0.7454` | `0.6846` | `0.8179` | High sensitivity / early flood warning |
+| **$\tau = 0.40$** | `0.6111` | `0.7586` | `0.7311` | `0.7882` | Balanced transition zone |
+| **$\tau = 0.50$ (Default)** | **`0.6176`** | **`0.7636`** | **`0.7621`** | **`0.7651`** | **Optimal operational threshold** |
+| **$\tau = 0.60$** | `0.6020` | `0.7515` | `0.8363` | `0.6824` | Conservative water delineation |
+| **$\tau = 0.70$** | `0.5937` | `0.7451` | `0.8666` | `0.6534` | High precision / low false-alarm core |
+
+### Confusion Matrix Summary (Test Split: 20,517,367 Evaluated Valid Pixels)
+
+- **True Positives (TP)**: `1,963,241` pixels
+- **False Positives (FP)**: `612,774` pixels
+- **False Negatives (FN)**: `602,860` pixels
+- **True Negatives (TN)**: `17,338,492` pixels
 
 ---
 
@@ -91,6 +108,15 @@ The platform continuously tracks **20 ground-truth disaster monitoring epicenter
 ---
 
 ## 6. Local Setup & Execution
+
+### Model Checkpoint Setup (Required for Live Inference)
+
+Due to file size constraints (`350,205,859 bytes`), `.pth` model weights are gitignored. The server enforces a strict fail-closed policy (`HTTP 503 FLOOD_MODEL_UNAVAILABLE`) if the checkpoint is absent. Download and verify the official checkpoint before launching inference:
+
+```bash
+python3 scripts/download_drive_file.py 1a2L1ojE_nOj6uz47qKpCd_TSjnwZ30O2 models/flood_segmentation/floodsight_unet_resnet34_best.pth
+python3 scripts/verify_checkpoint.py
+```
 
 ### Frontend (React 19 + TypeScript + Vite)
 ```bash

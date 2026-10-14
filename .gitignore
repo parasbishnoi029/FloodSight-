@@ -58,3 +58,7 @@ datasets/sen1floods11/v1.1/data/
 *.njsproj
 *.sln
 *.sw?
+
+# AI Studio & Cache Directories
+.aistudio/
+.gmp_cache/

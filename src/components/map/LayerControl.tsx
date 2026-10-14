@@ -16,7 +16,8 @@ import {
   CheckCircle2,
   XCircle,
   HelpCircle,
-  Compass
+  Compass,
+  Activity
 } from 'lucide-react';
 
 export interface MapLayerConfig {
@@ -30,6 +31,13 @@ export interface MapLayerConfig {
     showCore: boolean;
     showBuffer: boolean;
     showContours: boolean;
+  };
+  confidenceHeatmap: {
+    enabled: boolean;
+    opacity: number; // 0.1 to 1.0
+    uncertaintyThreshold: number; // e.g. 0.40
+    colorScheme: 'amber-hazard' | 'spectral-turbo';
+    showUncertaintyLegend: boolean;
   };
   emergencyRoutes: {
     enabled: boolean;
@@ -51,6 +59,13 @@ export const DEFAULT_LAYER_CONFIG: MapLayerConfig = {
     showCore: true,
     showBuffer: true,
     showContours: true
+  },
+  confidenceHeatmap: {
+    enabled: false,
+    opacity: 0.75,
+    uncertaintyThreshold: 0.40,
+    colorScheme: 'amber-hazard',
+    showUncertaintyLegend: true
   },
   emergencyRoutes: {
     enabled: true,
@@ -85,6 +100,7 @@ export const LayerControl: React.FC<LayerControlProps> = ({
   const activeCount = [
     layers.satellite.enabled,
     layers.floodMask.enabled,
+    layers.confidenceHeatmap.enabled,
     layers.emergencyRoutes.enabled
   ].filter(Boolean).length;
 
@@ -102,6 +118,13 @@ export const LayerControl: React.FC<LayerControlProps> = ({
     });
   };
 
+  const updateConfidenceHeatmap = (updates: Partial<MapLayerConfig['confidenceHeatmap']>) => {
+    onChange({
+      ...layers,
+      confidenceHeatmap: { ...layers.confidenceHeatmap, ...updates }
+    });
+  };
+
   const updateEmergencyRoutes = (updates: Partial<MapLayerConfig['emergencyRoutes']>) => {
     onChange({
       ...layers,
@@ -110,12 +133,13 @@ export const LayerControl: React.FC<LayerControlProps> = ({
   };
 
   // Preset handlers
-  const applyPreset = (preset: 'all' | 'satellite-only' | 'flood-only' | 'evac-only') => {
+  const applyPreset = (preset: 'all' | 'satellite-only' | 'flood-only' | 'uncertainty-only' | 'evac-only') => {
     switch (preset) {
       case 'all':
         onChange({
           satellite: { enabled: true, mode: 'hybrid' },
           floodMask: { enabled: true, opacity: 0.65, showCore: true, showBuffer: true, showContours: true },
+          confidenceHeatmap: { enabled: true, opacity: 0.75, uncertaintyThreshold: 0.40, colorScheme: 'amber-hazard', showUncertaintyLegend: true },
           emergencyRoutes: { enabled: true, showSafeCorridors: true, showSeveredRoads: true, showShelters: true, opacity: 0.9 }
         });
         break;
@@ -123,6 +147,7 @@ export const LayerControl: React.FC<LayerControlProps> = ({
         onChange({
           satellite: { enabled: true, mode: 'satellite' },
           floodMask: { enabled: false, opacity: 0.65, showCore: false, showBuffer: false, showContours: false },
+          confidenceHeatmap: { enabled: false, opacity: 0.75, uncertaintyThreshold: 0.40, colorScheme: 'amber-hazard', showUncertaintyLegend: false },
           emergencyRoutes: { enabled: false, showSafeCorridors: false, showSeveredRoads: false, showShelters: false, opacity: 0.9 }
         });
         break;
@@ -130,6 +155,15 @@ export const LayerControl: React.FC<LayerControlProps> = ({
         onChange({
           satellite: { enabled: true, mode: 'hybrid' },
           floodMask: { enabled: true, opacity: 0.85, showCore: true, showBuffer: true, showContours: true },
+          confidenceHeatmap: { enabled: false, opacity: 0.75, uncertaintyThreshold: 0.40, colorScheme: 'amber-hazard', showUncertaintyLegend: false },
+          emergencyRoutes: { enabled: false, showSafeCorridors: false, showSeveredRoads: false, showShelters: false, opacity: 0.9 }
+        });
+        break;
+      case 'uncertainty-only':
+        onChange({
+          satellite: { enabled: true, mode: 'hybrid' },
+          floodMask: { enabled: true, opacity: 0.35, showCore: true, showBuffer: true, showContours: true },
+          confidenceHeatmap: { enabled: true, opacity: 0.9, uncertaintyThreshold: 0.40, colorScheme: 'amber-hazard', showUncertaintyLegend: true },
           emergencyRoutes: { enabled: false, showSafeCorridors: false, showSeveredRoads: false, showShelters: false, opacity: 0.9 }
         });
         break;
@@ -137,6 +171,7 @@ export const LayerControl: React.FC<LayerControlProps> = ({
         onChange({
           satellite: { enabled: true, mode: 'roadmap' },
           floodMask: { enabled: true, opacity: 0.4, showCore: true, showBuffer: false, showContours: false },
+          confidenceHeatmap: { enabled: false, opacity: 0.75, uncertaintyThreshold: 0.40, colorScheme: 'amber-hazard', showUncertaintyLegend: false },
           emergencyRoutes: { enabled: true, showSafeCorridors: true, showSeveredRoads: true, showShelters: true, opacity: 1.0 }
         });
         break;
@@ -379,7 +414,143 @@ export const LayerControl: React.FC<LayerControlProps> = ({
               )}
             </div>
 
-            {/* LAYER 3: EMERGENCY ROUTE OVERLAYS */}
+            {/* LAYER 3: CONFIDENCE HEATMAP (MODEL UNCERTAINTY) */}
+            <div className={`p-2.5 rounded-xl border transition-all ${
+              layers.confidenceHeatmap.enabled
+                ? 'bg-slate-900/80 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.12)]'
+                : 'bg-slate-900/30 border-slate-800/80 opacity-60'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded-md flex items-center justify-center ${
+                    layers.confidenceHeatmap.enabled ? 'bg-amber-950 text-amber-400 border border-amber-800' : 'bg-slate-800 text-slate-500'
+                  }`}>
+                    <Activity className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-white text-[11px]">3. Confidence Heatmap</span>
+                      <span className="text-[9px] text-amber-300 bg-amber-950/80 px-1 rounded border border-amber-800/60">
+                        Uncertainty Index
+                      </span>
+                    </div>
+                    <span className="text-[9px] text-slate-400">Classification Ambiguity (0.35 &lt; P &lt; 0.65)</span>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => updateConfidenceHeatmap({ enabled: !layers.confidenceHeatmap.enabled })}
+                  className={`p-1 rounded cursor-pointer transition-colors ${
+                    layers.confidenceHeatmap.enabled ? 'text-amber-400 hover:text-amber-300' : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                  title={layers.confidenceHeatmap.enabled ? 'Disable Confidence Heatmap' : 'Enable Confidence Heatmap'}
+                >
+                  {layers.confidenceHeatmap.enabled ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {layers.confidenceHeatmap.enabled && (
+                <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-2">
+                  {/* Heatmap Opacity Slider */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <Sliders className="w-3 h-3 text-amber-400" />
+                        Heatmap Opacity:
+                      </span>
+                      <span className="text-amber-300 font-bold">{Math.round(layers.confidenceHeatmap.opacity * 100)}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="1.0"
+                      step="0.05"
+                      value={layers.confidenceHeatmap.opacity}
+                      onChange={(e) => updateConfidenceHeatmap({ opacity: parseFloat(e.target.value) })}
+                      className="w-full accent-amber-400 h-1.5 bg-slate-950 rounded cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Uncertainty Bandwidth Window */}
+                  <div className="space-y-1 pt-1">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span>Uncertainty Margin (&plusmn;&Delta;P):</span>
+                      <span className="text-amber-300 font-bold">&plusmn;{Math.round(layers.confidenceHeatmap.uncertaintyThreshold * 100)}% around &tau;=0.50</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.15"
+                      max="0.45"
+                      step="0.05"
+                      value={layers.confidenceHeatmap.uncertaintyThreshold}
+                      onChange={(e) => updateConfidenceHeatmap({ uncertaintyThreshold: parseFloat(e.target.value) })}
+                      className="w-full accent-amber-400 h-1.5 bg-slate-950 rounded cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Color Scheme Picker */}
+                  <div className="flex items-center justify-between text-[10px] pt-1">
+                    <span className="text-slate-400">Color Palette:</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => updateConfidenceHeatmap({ colorScheme: 'amber-hazard' })}
+                        className={`px-2 py-0.5 rounded text-[9px] font-mono cursor-pointer ${
+                          layers.confidenceHeatmap.colorScheme === 'amber-hazard'
+                            ? 'bg-amber-950 text-amber-300 border border-amber-600 font-bold'
+                            : 'bg-slate-950 text-slate-400 border border-slate-800'
+                        }`}
+                      >
+                        Amber / Violet
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateConfidenceHeatmap({ colorScheme: 'spectral-turbo' })}
+                        className={`px-2 py-0.5 rounded text-[9px] font-mono cursor-pointer ${
+                          layers.confidenceHeatmap.colorScheme === 'spectral-turbo'
+                            ? 'bg-cyan-950 text-cyan-300 border border-cyan-600 font-bold'
+                            : 'bg-slate-950 text-slate-400 border border-slate-800'
+                        }`}
+                      >
+                        Spectral Turbo
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Uncertainty mini-legend */}
+                  <div className="p-2 rounded bg-slate-950/70 border border-slate-800 text-[9px] font-mono space-y-1">
+                    <div className="text-slate-400 font-bold flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-amber-400" />
+                      <span>Model Uncertainty Gradient</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1 text-amber-300">
+                        <span className="w-2 h-2 rounded bg-amber-400 inline-block" />
+                        <span>Low Confidence (P &asymp; 0.50)</span>
+                      </span>
+                      <span className="text-slate-400">&gt; 80% Uncertainty</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1 text-fuchsia-300">
+                        <span className="w-2 h-2 rounded bg-fuchsia-500 inline-block" />
+                        <span>Moderate Confidence</span>
+                      </span>
+                      <span className="text-slate-400">Transition Margin</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1 text-cyan-300">
+                        <span className="w-2 h-2 rounded bg-cyan-400 inline-block" />
+                        <span>High Confidence (P &gt; 0.85)</span>
+                      </span>
+                      <span className="text-slate-400">Confirmed Core</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* LAYER 4: EMERGENCY ROUTE OVERLAYS */}
             <div className={`p-2.5 rounded-xl border transition-all ${
               layers.emergencyRoutes.enabled
                 ? 'bg-slate-900/80 border-emerald-500/30 shadow-[0_0_12px_rgba(16,185,129,0.08)]'
@@ -394,7 +565,7 @@ export const LayerControl: React.FC<LayerControlProps> = ({
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5">
-                      <span className="font-bold text-white text-[11px]">3. Emergency Route Overlays</span>
+                      <span className="font-bold text-white text-[11px]">4. Emergency Route Overlays</span>
                       <span className="text-[9px] text-emerald-300 bg-emerald-950/80 px-1 rounded border border-emerald-800/60">
                         {shelterCount} Hubs
                       </span>

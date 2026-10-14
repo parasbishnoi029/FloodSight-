@@ -16,7 +16,8 @@ const BASEMAP_TILES = {
   satellite: {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-    maxZoom: 19
+    maxZoom: 19,
+    maxNativeZoom: 17
   },
   roadmap: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -115,6 +116,17 @@ export const LeafletTacticalMap: React.FC<LeafletTacticalMapProps> = ({
         <span>Coords: ${selectedLocation.lat.toFixed(4)}°, ${selectedLocation.lon.toFixed(4)}°</span>
       </div>
     `);
+
+    epicenterMarker.bindTooltip(`
+      <div style="font-family: monospace; font-weight: bold; font-size: 11px; color: #ffffff; background-color: #0f172a; border: 1px solid #06b6d4; padding: 2px 6px; border-radius: 4px;">
+        📍 ${selectedLocation.country}: ${selectedLocation.name}
+      </div>
+    `, {
+      permanent: true,
+      direction: 'top',
+      offset: [0, -10]
+    });
+
     group.addLayer(epicenterMarker);
 
     // 2. Copernicus Sentinel-2 STAC Footprint Polygon (Real observation boundary)

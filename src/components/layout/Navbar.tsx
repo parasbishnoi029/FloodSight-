@@ -1,62 +1,66 @@
 import React from 'react';
 import { NavigationTab, HealthStatus } from '../../types';
 import { 
-  Radio, 
+  Globe, 
+  Radar, 
   Satellite, 
   Layers, 
   FileText, 
-  Info, 
-  Radar,
-  Mountain
+  Info,
+  Keyboard
 } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: NavigationTab;
   onSelectTab: (tab: NavigationTab) => void;
   health: HealthStatus | null;
+  onOpenHotkeys?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab, health }) => {
-  const isHealthy = health?.status === 'healthy';
-
-  const navItems: { id: NavigationTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'landing', label: 'Overview', icon: <Radio className="w-3.5 h-3.5" /> },
-    { id: 'dashboard', label: 'Command Hub', icon: <Radar className="w-3.5 h-3.5" /> },
-    { id: 'analyze', label: 'Verification & Analysis', icon: <Satellite className="w-3.5 h-3.5" /> },
-    { id: 'map', label: 'Tactical Map', icon: <Layers className="w-3.5 h-3.5" /> },
-    { id: 'reports', label: 'ICS Reports', icon: <FileText className="w-3.5 h-3.5" /> },
-    { id: 'about', label: 'Methodology', icon: <Info className="w-3.5 h-3.5" /> },
+export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab, health, onOpenHotkeys }) => {
+  const navItems: { id: NavigationTab; label: string; icon: React.ReactNode; shortcut: string }[] = [
+    { id: 'landing', label: 'Overview', icon: <Globe className="w-3.5 h-3.5" />, shortcut: 'H' },
+    { id: 'dashboard', label: 'Command Hub', icon: <Radar className="w-3.5 h-3.5" />, shortcut: 'D' },
+    { id: 'analyze', label: 'Analysis', icon: <Satellite className="w-3.5 h-3.5" />, shortcut: 'A' },
+    { id: 'map', label: 'Tactical Maps', icon: <Layers className="w-3.5 h-3.5" />, shortcut: 'M' },
+    { id: 'reports', label: 'Reports', icon: <FileText className="w-3.5 h-3.5" />, shortcut: 'R' },
+    { id: 'about', label: 'Methodology', icon: <Info className="w-3.5 h-3.5" />, shortcut: 'I' },
   ];
 
   return (
-    <header className="border-b border-slate-800/80 bg-slate-950/95 backdrop-blur-md sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+    <header className="sticky top-0 z-50 w-full border-b border-[rgba(148,170,195,0.16)] bg-[rgba(16,25,37,0.78)] backdrop-blur-[18px] backdrop-saturate-[135%] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05),0_4px_20px_rgba(0,0,0,0.25)]">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-6">
         
-        {/* Zone 1: Single Text Element Wordmark */}
+        {/* Zone 1: Distinctive Precision Brand Wordmark */}
         <div 
-          className="flex items-center gap-2.5 cursor-pointer select-none" 
+          className="flex items-center gap-2.5 cursor-pointer select-none group" 
           onClick={() => onSelectTab('landing')}
         >
-          <div className="w-8 h-8 rounded bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400">
-            <Radio className="w-4 h-4 animate-pulse" />
+          <div className="w-7.5 h-7.5 rounded-[9px] bg-[rgba(16,25,37,0.85)] border border-[rgba(148,170,195,0.18)] group-hover:border-[#39B8C8] group-hover:shadow-[0_0_10px_rgba(57,184,200,0.2)] flex items-center justify-center text-[#39B8C8] transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)]">
+            <Globe className="w-4 h-4 text-[#39B8C8]" />
           </div>
-          <span className="font-bold tracking-tight text-white text-base">
-            FloodSight <span className="text-cyan-400">AI</span>
-          </span>
+          <div className="flex items-baseline gap-1.5">
+            <span className="font-semibold tracking-tight text-[#F3F5F7] text-sm">
+              FloodSight
+            </span>
+            <span className="text-xs font-mono font-medium text-[#39B8C8]">
+              AI
+            </span>
+          </div>
         </div>
 
-        {/* Zone 2: 4-6 Clean Text Navigation Links */}
-        <nav className="hidden md:flex items-center gap-1.5">
+        {/* Zone 2: Refined 1-Line Navigation with Clean Spacing & Translucent Active States */}
+        <nav className="hidden md:flex items-center gap-1">
           {navItems.map((item) => {
             const active = currentTab === item.id;
             return (
               <button
                 key={item.id}
                 onClick={() => onSelectTab(item.id)}
-                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-[9px] cursor-pointer whitespace-nowrap transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)] ${
                   active
-                    ? 'bg-slate-900 text-cyan-300 border border-slate-700/80'
-                    : 'text-slate-400 hover:text-slate-100 hover:bg-slate-900/50'
+                    ? 'bg-[rgba(22,34,49,0.85)] text-[#F3F5F7] border border-[rgba(148,170,195,0.22)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06)]'
+                    : 'text-[#AAB8C8] hover:text-[#F3F5F7] hover:bg-[rgba(16,25,37,0.65)] hover:border hover:border-[rgba(148,170,195,0.12)] border border-transparent'
                 }`}
               >
                 {item.icon}
@@ -66,22 +70,24 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab, health 
           })}
         </nav>
 
-        {/* Zone 3: Primary Action & System State */}
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-2 text-xs font-mono text-slate-400">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isHealthy ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]' : 'bg-cyan-400'
-              }`}
-            />
-            <span>{isHealthy ? 'API ONLINE' : 'STANDALONE'}</span>
-          </div>
+        {/* Zone 3: Primary Action & Quick Tools */}
+        <div className="flex items-center gap-2.5 shrink-0">
+          {onOpenHotkeys && (
+            <button
+              onClick={onOpenHotkeys}
+              title="Keyboard Shortcuts (?)"
+              className="px-2.5 py-1.5 rounded-[9px] bg-[rgba(16,25,37,0.78)] border border-[rgba(148,170,195,0.16)] hover:border-[rgba(57,184,200,0.35)] text-[#AAB8C8] hover:text-[#F3F5F7] hover:-translate-y-[1px] transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)] cursor-pointer flex items-center gap-1.5 text-xs"
+            >
+              <Keyboard className="w-3.5 h-3.5" />
+              <kbd className="text-[10px] font-mono text-[#AAB8C8] bg-[rgba(22,34,49,0.6)] px-1 rounded">?</kbd>
+            </button>
+          )}
 
           <button
             onClick={() => onSelectTab('analyze')}
-            className="px-3.5 py-1.5 text-xs font-semibold rounded bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-colors whitespace-nowrap shadow-[0_0_15px_rgba(6,182,212,0.25)]"
+            className="px-3.5 py-1.5 text-xs font-semibold rounded-[9px] bg-[#39B8C8] hover:bg-[#55CAD6] active:bg-[#269AA9] text-[#080D14] hover:-translate-y-[1px] transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)] cursor-pointer whitespace-nowrap shadow-[0_2px_8px_rgba(57,184,200,0.2)] font-sans"
           >
-            Launch Analysis
+            Start Analysis
           </button>
         </div>
 

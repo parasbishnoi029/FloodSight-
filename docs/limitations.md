@@ -27,3 +27,27 @@ As a serious engineering prototype, FloodSight AI maintains complete technical t
 
 - **Research Prototype**: FloodSight AI is a decision-support prototype and does not replace emergency rescue dispatch or official meteorological warnings.
 - **Zero Hallucination Guarantee**: Generative models are barred from estimating casualty numbers, monetary damage amounts, or rescue outcomes.
+
+---
+
+## 4. U-Net Model Availability & Fail-Closed Boundaries
+
+### A. Missing or Corrupted Checkpoint Behavior
+- **Absolute Fail-Closed Policy**: If the U-Net ResNet-34 segmentation checkpoint (`models/flood_segmentation/floodsight_unet_resnet34_best.pth`) is absent, zero-byte, under 300MB, or fails archive validation:
+  - **Inference is Completely Blocked**: The system will **never** generate synthetic predictions, default flood masks, or heuristic ratios.
+  - **HTTP Status Code**: Requests to `POST /api/analyze` return **HTTP 503 Service Unavailable**.
+  - **Error Structure**:
+    ```json
+    {
+      "error": "FLOOD_MODEL_UNAVAILABLE",
+      "message": "No trained FloodSight segmentation checkpoint is installed.",
+      "checkpoint_expected_path": "models/flood_segmentation/floodsight_unet_resnet34_best.pth"
+    }
+    ```
+
+### B. Impact on Downstream Inference Results
+1. **Mask Generation**: No segmentation raster or GeoJSON vector polygons are emitted.
+2. **Flooded Area**: Physical area in hectares is strictly returned as `null` (`NOT AVAILABLE`).
+3. **Coverage Fractions**: Coverage percentage is `null` (never substituted with zero or arbitrary numbers).
+4. **Confidence Scores**: Mean model confidence is reported as unavailable.
+5. **UI Presentation**: The Analyze workspace disables action controls and presents an amber `MODEL: OFFLINE` indicator.

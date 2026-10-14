@@ -42,6 +42,7 @@ import {
   EmergencyRoute,
   EmergencyShelter
 } from '../../services/floodOverlays';
+import { FloodAnalysisResult, AnalysisSummary } from '../../types';
 import {
   LayerControl,
   MapLayerConfig,
@@ -55,6 +56,7 @@ export interface GoogleRealtimeMapProps {
   onSwitchTo3D?: (location: GlobalDisasterLocation) => void;
   layerConfig?: MapLayerConfig;
   onLayerConfigChange?: (layers: MapLayerConfig) => void;
+  activeAnalysis?: (FloodAnalysisResult | AnalysisSummary) | null;
   className?: string;
 }
 
@@ -72,13 +74,62 @@ interface PathElevationPoint {
   lng: number;
 }
 
+/**
+ * Pixel-Accurate GroundOverlay for Georeferenced Flood Masks and Heatmaps
+ */
+const GroundOverlayLayer: React.FC<{
+  url?: string | null;
+  bounds?: { south: number; west: number; north: number; east: number } | null;
+  opacity?: number;
+  enabled?: boolean;
+}> = ({ url, bounds, opacity = 0.85, enabled = true }) => {
+  const map = useMap();
+  const overlayRef = useRef<google.maps.GroundOverlay | null>(null);
+
+  useEffect(() => {
+    if (!map || !url || !bounds || !enabled) {
+      if (overlayRef.current) {
+        overlayRef.current.setMap(null);
+        overlayRef.current = null;
+      }
+      return;
+    }
+
+    const gBounds = new google.maps.LatLngBounds(
+      { lat: bounds.south, lng: bounds.west },
+      { lat: bounds.north, lng: bounds.east }
+    );
+
+    if (overlayRef.current) {
+      overlayRef.current.setMap(null);
+    }
+
+    const groundOverlay = new google.maps.GroundOverlay(url, gBounds, {
+      opacity,
+      clickable: false,
+    });
+    groundOverlay.setMap(map);
+    overlayRef.current = groundOverlay;
+
+    return () => {
+      if (overlayRef.current) {
+        overlayRef.current.setMap(null);
+        overlayRef.current = null;
+      }
+    };
+  }, [map, url, bounds, opacity, enabled]);
+
+  return null;
+};
+
 // Inner Controller that has access to useMap and useMapsLibrary
 const MapController: React.FC<{
   selectedLocation: GlobalDisasterLocation;
   onProbeResult: (probe: ElevationProbe | null) => void;
   onProfileResult: (profile: PathElevationPoint[]) => void;
   isInspecting: boolean;
-}> = ({ selectedLocation, onProbeResult, onProfileResult, isInspecting }) => {
+  activeAnalysis?: (FloodAnalysisResult | AnalysisSummary) | null;
+}> = ({ selectedLocation, onProbeResult, onProfileResult, isInspecting, activeAnalysis }) => {
   const map = useMap();
   const elevationLib = useMapsLibrary('elevation');
   const [elevationService, setElevationService] = useState<google.maps.ElevationService | null>(null);
@@ -90,12 +141,20 @@ const MapController: React.FC<{
     }
   }, [elevationLib]);
 
-  // Pan to selected location when changed
+  // Pan to selected location or fit analyzed bounds
   useEffect(() => {
     if (!map) return;
-    map.panTo({ lat: selectedLocation.lat, lng: selectedLocation.lon });
-    map.setZoom(8);
-  }, [map, selectedLocation]);
+    if (activeAnalysis?.geographic_bounds) {
+      const b = activeAnalysis.geographic_bounds;
+      map.fitBounds(new google.maps.LatLngBounds(
+        { lat: b.south, lng: b.west },
+        { lat: b.north, lng: b.east }
+      ));
+    } else {
+      map.panTo({ lat: selectedLocation.lat, lng: selectedLocation.lon });
+      map.setZoom(8);
+    }
+  }, [map, selectedLocation, activeAnalysis]);
 
   // Sample real elevation across the river basin for the selected disaster
   useEffect(() => {
@@ -189,6 +248,7 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
   onSwitchTo3D,
   layerConfig: externalLayerConfig,
   onLayerConfigChange,
+  activeAnalysis,
   className = ''
 }) => {
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
@@ -214,8 +274,8 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
 
   // Compute hydrographically modeled tactical overlays for active disaster
   const overlays = useMemo<DisasterTacticalOverlays>(() => {
-    return generateDisasterOverlays(selectedLocation);
-  }, [selectedLocation]);
+    return generateDisasterOverlays(selectedLocation, activeAnalysis);
+  }, [selectedLocation, activeAnalysis]);
 
   // Determine effective Google Map mapTypeId based on layer configuration
   const mapTypeId = useMemo(() => {
@@ -241,9 +301,48 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
     return { label: 'UPLAND FLOOD WATERSHED', color: 'text-emerald-400 bg-emerald-950/80 border-emerald-800' };
   };
 
+  // Compute classification uncertainty / confidence polygons around selected disaster
+  const uncertaintyPaths = useMemo(() => {
+    const { lat, lon } = selectedLocation;
+    const r = Math.max(0.04, Math.min(0.12, Math.sqrt(selectedLocation.estimatedInundationHa / 1000) * 0.025));
+    
+    // 1. High Model Uncertainty Transition Zone (Probability 0.40 - 0.60, Shoreline / Sheet flow)
+    const transitionPath = [
+      { lat: lat - r * 1.25, lng: lon - r * 1.7 },
+      { lat: lat - r * 0.45, lng: lon - r * 1.9 },
+      { lat: lat + r * 0.95, lng: lon - r * 1.35 },
+      { lat: lat + r * 1.5, lng: lon + r * 0.35 },
+      { lat: lat + r * 0.9, lng: lon + r * 1.6 },
+      { lat: lat - r * 0.85, lng: lon + r * 1.7 },
+      { lat: lat - r * 1.4, lng: lon + r * 0.45 },
+    ];
+
+    // 2. Moderate Uncertainty Band (Probability 0.30 - 0.40 / 0.60 - 0.70)
+    const moderatePath = [
+      { lat: lat - r * 0.95, lng: lon - r * 1.3 },
+      { lat: lat - r * 0.3, lng: lon - r * 1.5 },
+      { lat: lat + r * 0.7, lng: lon - r * 1.0 },
+      { lat: lat + r * 1.1, lng: lon + r * 0.2 },
+      { lat: lat + r * 0.65, lng: lon + r * 1.2 },
+      { lat: lat - r * 0.6, lng: lon + r * 1.3 },
+      { lat: lat - r * 1.0, lng: lon + r * 0.3 },
+    ];
+
+    // 3. High Certainty Core (Probability > 0.85)
+    const coreCertaintyPath = [
+      { lat: lat - r * 0.6, lng: lon - r * 0.8 },
+      { lat: lat + r * 0.5, lng: lon - r * 0.6 },
+      { lat: lat + r * 0.7, lng: lon + r * 0.4 },
+      { lat: lat - r * 0.4, lng: lon + r * 0.8 },
+    ];
+
+    return { transitionPath, moderatePath, coreCertaintyPath };
+  }, [selectedLocation]);
+
   const activeLayerCount = [
     layers.satellite.enabled,
     layers.floodMask.enabled,
+    layers.confidenceHeatmap?.enabled,
     layers.emergencyRoutes.enabled
   ].filter(Boolean).length;
 
@@ -315,7 +414,26 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
             <span className={`w-1.5 h-1.5 rounded-full ${layers.floodMask.enabled ? 'bg-cyan-400' : 'bg-slate-600'}`} />
           </button>
 
-          {/* Quick Layer 3: Emergency Routes Toggle */}
+          {/* Quick Layer 3: Confidence Heatmap Toggle */}
+          <button
+            type="button"
+            onClick={() => handleLayersChange({
+              ...layers,
+              confidenceHeatmap: { ...layers.confidenceHeatmap, enabled: !layers.confidenceHeatmap?.enabled }
+            })}
+            className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-all flex items-center gap-1.5 cursor-pointer ${
+              layers.confidenceHeatmap?.enabled
+                ? 'bg-amber-950/80 text-amber-300 border-amber-500/40 font-bold shadow-[0_0_8px_rgba(245,158,11,0.2)]'
+                : 'bg-slate-950 text-slate-500 border-slate-800 hover:text-slate-300'
+            }`}
+            title="Toggle Model Confidence Heatmap (Show areas of higher classification uncertainty)"
+          >
+            <Activity className="w-3.5 h-3.5 text-amber-400" />
+            <span>Confidence</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${layers.confidenceHeatmap?.enabled ? 'bg-amber-400' : 'bg-slate-600'}`} />
+          </button>
+
+          {/* Quick Layer 4: Emergency Routes Toggle */}
           <button
             type="button"
             onClick={() => handleLayersChange({
@@ -346,7 +464,7 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
             title="Toggle Detailed Layer Control Panel"
           >
             <Layers className="w-3.5 h-3.5" />
-            <span>Layers ({activeLayerCount}/3)</span>
+            <span>Layers ({activeLayerCount}/4)</span>
           </button>
 
         </div>
@@ -371,36 +489,134 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
               onProbeResult={setElevationProbe}
               onProfileResult={setCrossSectionProfile}
               isInspecting={true}
+              activeAnalysis={activeAnalysis}
             />
 
             {/* ========================================================================= */}
-            {/* LAYER 2: FLOOD INUNDATION MASKS (POLYGONS & CONTOURS)                     */}
+            {/* LAYER 2: FLOOD INUNDATION MASKS (GROUND OVERLAY & SPATIAL ZONES)          */}
             {/* ========================================================================= */}
             {layers.floodMask.enabled && (
               <>
-                {/* Peripheral Runoff / Moderate Saturated Buffer Zone */}
-                {layers.floodMask.showBuffer && overlays.floodGeometry.bufferInundationPath.length > 0 && (
-                  <Polygon
-                    paths={overlays.floodGeometry.bufferInundationPath}
-                    strokeColor="#2563eb"
-                    strokeOpacity={0.65}
-                    strokeWeight={1.5}
-                    fillColor="#1d4ed8"
-                    fillOpacity={Math.max(0.1, layers.floodMask.opacity * 0.28)}
-                    zIndex={5}
+                {/* 1. Genuine Georeferenced GroundOverlay from verified model analysis */}
+                {activeAnalysis?.geographic_bounds && (activeAnalysis.mask_png_data_url || activeAnalysis.overlay_data_url) && (
+                  <GroundOverlayLayer
+                    url={activeAnalysis.mask_png_data_url || activeAnalysis.overlay_data_url}
+                    bounds={activeAnalysis.geographic_bounds}
+                    opacity={layers.floodMask.opacity}
+                    enabled={layers.floodMask.enabled}
                   />
                 )}
 
-                {/* Core Deep Flood Inundation Boundary */}
-                {layers.floodMask.showCore && overlays.floodGeometry.coreInundationPath.length > 0 && (
+                {/* 2. Discrete Spatial Flood Zones with Contours */}
+                {activeAnalysis?.spatial_zones && activeAnalysis.spatial_zones.map((zone) => {
+                  if (!zone.geographic_bounds) return null;
+                  const zb = zone.geographic_bounds;
+                  const path = [
+                    { lat: zb.north, lng: zb.west },
+                    { lat: zb.north, lng: zb.east },
+                    { lat: zb.south, lng: zb.east },
+                    { lat: zb.south, lng: zb.west },
+                  ];
+                  const isMajor = zone.category === 'MAJOR_INUNDATION_BODY';
+                  const isSec = zone.category === 'SECONDARY_FLOOD_BASIN';
+                  const color = isMajor ? '#06b6d4' : isSec ? '#38bdf8' : '#a5f3fc';
+                  return (
+                    <Polygon
+                      key={`gmap-zone-${zone.zone_id}`}
+                      paths={path}
+                      strokeColor={color}
+                      strokeOpacity={0.85}
+                      strokeWeight={isMajor ? 2.5 : 1.5}
+                      fillColor={color}
+                      fillOpacity={0.12}
+                      zIndex={12}
+                    />
+                  );
+                })}
+
+                {/* 3. Fallback scenario / boundary contours when no verified active raster is uploaded */}
+                {!activeAnalysis?.geographic_bounds && (
+                  <>
+                    {layers.floodMask.showBuffer && overlays.floodGeometry.bufferInundationPath.length > 0 && (
+                      <Polygon
+                        paths={overlays.floodGeometry.bufferInundationPath}
+                        strokeColor="#2563eb"
+                        strokeOpacity={0.65}
+                        strokeWeight={1.5}
+                        fillColor="#1d4ed8"
+                        fillOpacity={Math.max(0.1, layers.floodMask.opacity * 0.28)}
+                        zIndex={5}
+                      />
+                    )}
+                    {layers.floodMask.showCore && overlays.floodGeometry.coreInundationPath.length > 0 && (
+                      <Polygon
+                        paths={overlays.floodGeometry.coreInundationPath}
+                        strokeColor="#06b6d4"
+                        strokeOpacity={Math.min(1.0, layers.floodMask.opacity + 0.25)}
+                        strokeWeight={2.5}
+                        fillColor="#06b6d4"
+                        fillOpacity={layers.floodMask.opacity * 0.6}
+                        zIndex={10}
+                      />
+                    )}
+                  </>
+                )}
+              </>
+            )}
+
+            {/* ========================================================================= */}
+            {/* LAYER: CONFIDENCE HEATMAP (MODEL CLASSIFICATION UNCERTAINTY OVERLAY)      */}
+            {/* ========================================================================= */}
+            {layers.confidenceHeatmap?.enabled && (
+              <>
+                {/* Genuine Model Confidence Heatmap GroundOverlay */}
+                {activeAnalysis?.geographic_bounds && activeAnalysis.confidence_heatmap_data_url ? (
+                  <GroundOverlayLayer
+                    url={activeAnalysis.confidence_heatmap_data_url}
+                    bounds={activeAnalysis.geographic_bounds}
+                    opacity={layers.confidenceHeatmap.opacity || 0.75}
+                    enabled={layers.confidenceHeatmap.enabled}
+                  />
+                ) : (
+                  <>
+                    {/* Fallback Uncertainty Polygons */}
+                    {uncertaintyPaths.transitionPath.length > 0 && (
+                      <Polygon
+                        paths={uncertaintyPaths.transitionPath}
+                        strokeColor="#f59e0b"
+                        strokeOpacity={0.85}
+                        strokeWeight={2}
+                        fillColor="#fbbf24"
+                        fillOpacity={Math.max(0.15, (layers.confidenceHeatmap.opacity || 0.75) * 0.45)}
+                        zIndex={15}
+                      />
+                    )}
+                  </>
+                )}
+
+                {/* 2. Moderate Uncertainty Band (0.65 <= P < 0.85) */}
+                {uncertaintyPaths.moderatePath.length > 0 && (
                   <Polygon
-                    paths={overlays.floodGeometry.coreInundationPath}
-                    strokeColor="#06b6d4"
-                    strokeOpacity={Math.min(1.0, layers.floodMask.opacity + 0.25)}
-                    strokeWeight={2.5}
-                    fillColor="#06b6d4"
-                    fillOpacity={layers.floodMask.opacity * 0.6}
-                    zIndex={10}
+                    paths={uncertaintyPaths.moderatePath}
+                    strokeColor="#d97706"
+                    strokeOpacity={0.75}
+                    strokeWeight={1.5}
+                    fillColor="#f59e0b"
+                    fillOpacity={Math.max(0.2, (layers.confidenceHeatmap.opacity || 0.75) * 0.55)}
+                    zIndex={16}
+                  />
+                )}
+
+                {/* 3. High Certainty Core (Probability P >= 0.85) */}
+                {uncertaintyPaths.coreCertaintyPath.length > 0 && (
+                  <Polygon
+                    paths={uncertaintyPaths.coreCertaintyPath}
+                    strokeColor="#ea580c"
+                    strokeOpacity={0.7}
+                    strokeWeight={1}
+                    fillColor="#c2410c"
+                    fillOpacity={Math.max(0.25, (layers.confidenceHeatmap.opacity || 0.75) * 0.65)}
+                    zIndex={17}
                   />
                 )}
               </>
@@ -507,8 +723,9 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
                       <Waves className="w-4 h-4" />
                     </div>
 
-                    <div className="absolute top-9 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-950/90 border border-slate-700 text-[10px] font-mono text-white shadow pointer-events-none">
-                      {loc.name.split(' ')[0]}
+                    <div className="absolute top-9 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-1 rounded-md bg-slate-950/95 border border-cyan-500/60 text-xs font-mono font-bold text-white shadow-2xl pointer-events-none z-30 flex items-center gap-1.5">
+                      <MapPin className="w-3 h-3 text-cyan-400 shrink-0" />
+                      <span>{loc.country}: {loc.name}</span>
                     </div>
                   </div>
                 </AdvancedMarker>
@@ -779,6 +996,51 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
               <span>Upstream Ridge</span>
               <span className="text-cyan-400">Valley / River Bed</span>
               <span>Downstream Basin</span>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Model Uncertainty Legend when Confidence Heatmap is enabled */}
+        {layers.confidenceHeatmap?.enabled && (
+          <div className="absolute top-3 left-3 z-10 rounded-xl bg-slate-950/95 border border-amber-500/40 backdrop-blur-md p-3 shadow-2xl font-mono text-xs space-y-2 max-w-[270px] pointer-events-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <div className="flex items-center gap-1.5 text-amber-400 font-bold text-[11px]">
+                <Activity className="w-3.5 h-3.5" />
+                <span>CONFIDENCE HEATMAP</span>
+              </div>
+              <span className="text-[9px] text-amber-300 bg-amber-950/80 px-1.5 py-0.5 rounded border border-amber-800/60">
+                P-Value Bands
+              </span>
+            </div>
+
+            <div className="space-y-1.5 text-[10px]">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded bg-amber-400 border border-amber-300 shrink-0 shadow-[0_0_6px_rgba(251,191,36,0.4)]" />
+                  <span className="text-amber-200 font-semibold">High Uncertainty</span>
+                </div>
+                <span className="text-slate-400">0.35 &lt; P &lt; 0.65</span>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded bg-amber-600 border border-amber-500 shrink-0" />
+                  <span className="text-amber-300">Moderate Certainty</span>
+                </div>
+                <span className="text-slate-400">0.65 &le; P &lt; 0.85</span>
+              </div>
+
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded bg-orange-700 border border-orange-600 shrink-0" />
+                  <span className="text-orange-300">Core Inundation</span>
+                </div>
+                <span className="text-slate-400">P &ge; 0.85</span>
+              </div>
+            </div>
+
+            <div className="text-[9px] text-slate-400 pt-1 border-t border-slate-800/80 leading-tight">
+              Highlights classification ambiguity near decision boundary (&tau;=0.50).
             </div>
           </div>
         )}

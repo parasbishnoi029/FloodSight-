@@ -8,7 +8,7 @@
  */
 
 import { GlobalDisasterLocation } from '../data/globalDisasters';
-import { FloodAnalysisResult, HydrologyObservation, SatelliteCatalogProduct } from '../types';
+import { FloodAnalysisResult, SatelliteCatalogProduct, SpatialFloodZone, AnalysisSummary } from '../types';
 
 export interface LatLngPoint {
   lat: number;
@@ -19,6 +19,11 @@ export interface FloodInundationGeometry {
   isVerifiedModelOutput: boolean;
   coreInundationPath: LatLngPoint[];
   bufferInundationPath: LatLngPoint[];
+  maskPngDataUrl?: string;
+  confidenceHeatmapDataUrl?: string;
+  geographicBounds?: { south: number; west: number; north: number; east: number } | null;
+  cornerPoints?: LatLngPoint[] | null;
+  spatialZones?: SpatialFloodZone[];
   inundationAreaHa: number | null;
   spatialResolutionMeters: number | null;
   provenanceSource: string;
@@ -59,12 +64,12 @@ export interface DisasterTacticalOverlays {
 /**
  * Builds tactical overlays for a disaster location.
  * In accordance with Zero-Fabrication governance:
- * - If verified analysis is provided, maps genuine model prediction extent.
+ * - If verified analysis is provided, maps genuine model prediction extent and mask overlay.
  * - Otherwise, reports MODEL_INFERENCE_PENDING and does NOT draw fabricated polygons.
  */
 export function generateDisasterOverlays(
   location: GlobalDisasterLocation,
-  verifiedAnalysis?: FloodAnalysisResult | null,
+  verifiedAnalysis?: (FloodAnalysisResult | AnalysisSummary) | null,
   satelliteProduct?: SatelliteCatalogProduct | null
 ): DisasterTacticalOverlays {
   const hasAnalysis = Boolean(verifiedAnalysis && verifiedAnalysis.status === 'SUCCESS');
@@ -76,31 +81,47 @@ export function generateDisasterOverlays(
       const ring = satelliteProduct.footprint_geometry.coordinates[0];
       stacFootprint = ring.map((pt: [number, number]) => ({
         lat: Number(pt[1].toFixed(5)),
-        lng: Number(pt[0].toFixed(5))
+        lng: Number(pt[0].toFixed(5)),
       }));
     } catch {}
   }
 
   if (hasAnalysis && verifiedAnalysis) {
-    // Real verified model analysis output
+    const cornerPoints: LatLngPoint[] = verifiedAnalysis.corner_coordinates_latlng
+      ? verifiedAnalysis.corner_coordinates_latlng.map(([lat, lon]) => ({ lat, lng: lon }))
+      : verifiedAnalysis.geographic_bounds
+      ? [
+          { lat: verifiedAnalysis.geographic_bounds.north, lng: verifiedAnalysis.geographic_bounds.west },
+          { lat: verifiedAnalysis.geographic_bounds.north, lng: verifiedAnalysis.geographic_bounds.east },
+          { lat: verifiedAnalysis.geographic_bounds.south, lng: verifiedAnalysis.geographic_bounds.east },
+          { lat: verifiedAnalysis.geographic_bounds.south, lng: verifiedAnalysis.geographic_bounds.west },
+        ]
+      : [];
+
     return {
       locationId: location.id,
       hasVerifiedModelOutput: true,
       floodGeometry: {
         isVerifiedModelOutput: true,
-        coreInundationPath: [], // Raster overlay data URL used for pixel-level accuracy
+        coreInundationPath: cornerPoints,
         bufferInundationPath: [],
-        inundationAreaHa: verifiedAnalysis.physical_area_ha,
+        maskPngDataUrl: verifiedAnalysis.mask_png_data_url || verifiedAnalysis.overlay_data_url,
+        confidenceHeatmapDataUrl: verifiedAnalysis.confidence_heatmap_data_url,
+        geographicBounds: verifiedAnalysis.geographic_bounds,
+        cornerPoints,
+        spatialZones: verifiedAnalysis.spatial_zones,
+        inundationAreaHa: verifiedAnalysis.physical_area_ha ?? null,
         spatialResolutionMeters: verifiedAnalysis.spatial_resolution_m ? verifiedAnalysis.spatial_resolution_m[0] : null,
         provenanceSource: `Verified U-Net ResNet-34 (${verifiedAnalysis.filename})`,
         analysisId: verifiedAnalysis.analysis_id,
-        sourceTimestamp: verifiedAnalysis.created_at
+        sourceTimestamp: verifiedAnalysis.created_at,
       },
       emergencyRoutes: [],
       shelters: [],
       infrastructureLayerStatus: 'UNAVAILABLE_PENDING_GROUND_INFRASTRUCTURE',
-      infrastructureNotice: 'Infrastructure vector layer unavailable: Requires verified road/bridge GIS network intersection dataset.',
-      stacFootprint
+      infrastructureNotice:
+        'Infrastructure vector layer unavailable: Requires verified road/bridge GIS network intersection dataset.',
+      stacFootprint,
     };
   }
 
@@ -116,12 +137,13 @@ export function generateDisasterOverlays(
       spatialResolutionMeters: null,
       provenanceSource: 'MODEL NOT RUN / AWAITING VERIFIED PRODUCT',
       analysisId: undefined,
-      sourceTimestamp: undefined
+      sourceTimestamp: undefined,
     },
     emergencyRoutes: [],
     shelters: [],
     infrastructureLayerStatus: 'UNAVAILABLE_PENDING_GROUND_INFRASTRUCTURE',
-    infrastructureNotice: 'Emergency routes & infrastructure layers are disabled: Zero-Fabrication governance requires validated OpenStreetMap / Department of Transportation vector datasets.',
-    stacFootprint
+    infrastructureNotice:
+      'Emergency routes & infrastructure layers are disabled: Zero-Fabrication governance requires validated OpenStreetMap / Department of Transportation vector datasets.',
+    stacFootprint,
   };
 }

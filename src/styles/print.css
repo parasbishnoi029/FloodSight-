@@ -1,0 +1,287 @@
+/**
+ * FloodSight AI — Dedicated Print-Friendly Stylesheet for Incident Command System (ICS-209 / SITREP)
+ * Triggers automatically when printing the Reports page (Ctrl+P, Cmd+P, or window.print()).
+ * Ensures high-contrast, ink-saving, border-delineated formatting for physical disaster reports.
+ */
+
+@media print {
+  /* 1. Global Page Layout & Printable Margins */
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 12mm 12mm;
+  }
+
+  /* 2. Color Calibration & Contrast Reset */
+  *,
+  *::before,
+  *::after {
+    background-color: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important; /* Deep Navy/Slate text for crisp readability */
+    font-size: 10.5pt !important;
+    line-height: 1.4 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+  }
+
+  /* 3. Hide Screen-Only Navigation & Interactive Elements */
+  nav,
+  header,
+  footer,
+  .navbar,
+  .no-print,
+  .screen-only,
+  [data-print="hide"],
+  button,
+  select,
+  input,
+  .hotkey-modal,
+  .fixed,
+  .sticky {
+    display: none !important;
+  }
+
+  /* Ensure the printed report container expands cleanly to full printable width */
+  #root,
+  main,
+  .print-container,
+  .reports-page-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    background: #ffffff !important;
+  }
+
+  /* 4. Document Classification & Physical Header */
+  .print-only-header {
+    display: block !important;
+    border-bottom: 2pt solid #0f172a !important;
+    padding-bottom: 6pt !important;
+    margin-bottom: 10pt !important;
+  }
+
+  .print-badge {
+    border: 1pt solid #0f172a !important;
+    color: #0f172a !important;
+    padding: 2pt 5pt !important;
+    font-weight: 700 !important;
+    font-size: 8pt !important;
+    display: inline-block !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  /* 5. Metrics Cards & Grid Formatting */
+  .glass-panel,
+  .glass-panel-elevated,
+  .glass-card,
+  .print-card {
+    background: #ffffff !important;
+    border: 1pt solid #94a3b8 !important; /* Solid slate border */
+    border-radius: 4pt !important;
+    padding: 8pt 10pt !important;
+    margin-bottom: 10pt !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-metric-box {
+    background: #f8fafc !important;
+    border: 1pt solid #cbd5e1 !important;
+    border-top: 3pt solid #0284c7 !important; /* Accent border on metric top */
+    padding: 6pt 8pt !important;
+    border-radius: 3pt !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* Metric values styling */
+  .print-metric-value {
+    color: #0f172a !important;
+    font-weight: 800 !important;
+    font-size: 13pt !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    margin: 2pt 0 !important;
+  }
+
+  .print-metric-label {
+    color: #475569 !important;
+    font-size: 7.5pt !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+  }
+
+  .print-metric-subtext {
+    color: #64748b !important;
+    font-size: 7pt !important;
+  }
+
+  /* 6. High-Contrast Charts & Progress Gauges */
+  .print-chart-container {
+    background: #f8fafc !important;
+    border: 1pt solid #cbd5e1 !important;
+    border-radius: 4pt !important;
+    padding: 8pt 10pt !important;
+    margin: 8pt 0 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-chart-track {
+    background: #e2e8f0 !important;
+    border: 1pt solid #94a3b8 !important;
+    height: 12pt !important;
+    border-radius: 2pt !important;
+    position: relative !important;
+    overflow: hidden !important;
+  }
+
+  .print-chart-bar-cyan {
+    background: #0284c7 !important; /* High contrast cyan/navy ink */
+    height: 100% !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  .print-chart-bar-amber {
+    background: #d97706 !important;
+    height: 100% !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  .print-chart-bar-rose {
+    background: #dc2626 !important;
+    height: 100% !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* 7. Tables & Geospatial Spec Data */
+  table,
+  .print-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin: 8pt 0 !important;
+    font-size: 8.5pt !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  th,
+  td,
+  .print-table-row {
+    border: 1pt solid #cbd5e1 !important;
+    padding: 3.5pt 5pt !important;
+    text-align: left !important;
+  }
+
+  th {
+    background: #f1f5f9 !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+  }
+
+  /* 8. Text Color Overrides for High-Contrast Paper Printing */
+  h1, h2, h3, h4, h5, h6 {
+    color: #0f172a !important;
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  p, span, div, strong {
+    color: #1e293b !important;
+  }
+
+  .text-cyan-300,
+  .text-cyan-400,
+  .text-cyan-500 {
+    color: #0369a1 !important; /* Deep Cyan ink */
+    font-weight: 700 !important;
+  }
+
+  .text-emerald-300,
+  .text-emerald-400,
+  .text-emerald-500 {
+    color: #047857 !important;
+    font-weight: 700 !important;
+  }
+
+  .text-amber-300,
+  .text-amber-400,
+  .text-amber-500 {
+    color: #b45309 !important;
+    font-weight: 700 !important;
+  }
+
+  .text-rose-300,
+  .text-rose-400,
+  .text-rose-500 {
+    color: #b91c1c !important;
+    font-weight: 700 !important;
+  }
+
+  .text-slate-400,
+  .text-slate-500 {
+    color: #475569 !important;
+  }
+
+  .text-slate-200,
+  .text-slate-300,
+  .text-white {
+    color: #0f172a !important;
+  }
+
+  /* Technical identifiers & tokens */
+  .font-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+    font-size: 8pt !important;
+  }
+
+  /* 9. Page Break Discipline */
+  .page-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  .no-break {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* 10. Printable Document Footer & Watermark */
+  .print-only-footer {
+    display: block !important;
+    margin-top: 12pt !important;
+    padding-top: 5pt !important;
+    border-top: 1pt solid #cbd5e1 !important;
+    font-size: 7pt !important;
+    color: #64748b !important;
+  }
+}
+
+/* Hide print-only elements on normal screen */
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}

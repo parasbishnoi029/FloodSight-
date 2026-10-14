@@ -3,10 +3,10 @@ import urllib.parse
 import json
 import time
 import struct
-import os
+import math
 
-def create_geotiff_bytes(width=512, height=512, scale_m=10.0):
-    # Construct genuine little-endian GeoTIFF buffer
+def create_geotiff_bytes(width=512, height=512, scale_m=10.0, mode='mixed'):
+    # Modes: 'all_flood', 'no_flood', 'mixed'
     num_tags = 14
     header_size = 8
     ifd_size = 2 + num_tags * 12 + 4
@@ -32,7 +32,6 @@ def create_geotiff_bytes(width=512, height=512, scale_m=10.0):
         struct.pack_into('<HHII', buf, offset, tag, tag_type, count, val_or_offset)
         offset += 12
 
-    # IFD Tags
     write_tag(256, 4, 1, width) # Width
     write_tag(257, 4, 1, height) # Height
     write_tag(258, 3, 3, extra_offset) # BitsPerSample
@@ -50,25 +49,23 @@ def create_geotiff_bytes(width=512, height=512, scale_m=10.0):
 
     struct.pack_into('<I', buf, offset, 0) # End of IFD
 
-    # Extra data: BitsPerSample [16, 16, 16]
     struct.pack_into('<HHH', buf, extra_offset, 16, 16, 16)
-
-    # ModelPixelScaleTag [scale_m, scale_m, 0.0]
     struct.pack_into('<ddd', buf, extra_offset + 32, scale_m, scale_m, 0.0)
-
-    # ModelTiepointTag [0, 0, 0, 500000.0, 4000000.0, 0.0] (UTM meters)
     struct.pack_into('<dddddd', buf, extra_offset + 64, 0.0, 0.0, 0.0, 500000.0, 4000000.0, 0.0)
 
-    # Raster data (water and vegetation reflectance values)
     pixel_idx = data_offset
     for y in range(height):
         for x in range(width):
-            dist = abs((x / width) - 0.5)
-            is_water = dist < 0.12 # 24% width flood channel
-            if is_water:
-                b4, b3, b2 = 320, 640, 980 # Water signature
-            else:
-                b4, b3, b2 = 1420, 1150, 620 # Land signature
+            if mode == 'all_flood':
+                b4, b3, b2 = 320, 640, 980 # All water
+            elif mode == 'no_flood':
+                b4, b3, b2 = 1420, 1150, 620 # All land
+            else: # mixed
+                dist = abs((x / width) - 0.5)
+                if dist < 0.12:
+                    b4, b3, b2 = 320, 640, 980 # Water channel (24%)
+                else:
+                    b4, b3, b2 = 1420, 1150, 620 # Land
             struct.pack_into('<HHH', buf, pixel_idx, b4, b3, b2)
             pixel_idx += 6
 
@@ -109,70 +106,72 @@ def post_multipart(url, fields, files):
         res_body = e.read().decode('utf-8')
         return e.code, json.loads(res_body), elapsed
 
-def main():
-    print("Step 1: Generating standard Sentinel-2 GeoTIFF chip (512x512, 10m GSD)...")
-    tiff_bytes = create_geotiff_bytes(512, 512, 10.0)
-    print(f"Generated GeoTIFF: {len(tiff_bytes)} bytes")
+def run_test_case(name, mode, scale_m=10.0, is_geo=False):
+    print(f"\n--- Running test: {name} (mode={mode}) ---")
+    tiff_bytes = create_geotiff_bytes(512, 512, scale_m, mode=mode)
+    if is_geo:
+        # Scale in degrees at latitude 39.5 N
+        geo_tiff = bytearray(tiff_bytes)
+        extra_offset = 8 + (2 + 14 * 12 + 4)
+        scale_deg = 8.983152841195215e-05
+        struct.pack_into('<ddd', geo_tiff, extra_offset + 32, scale_deg, scale_deg, 0.0)
+        struct.pack_into('<dddddd', geo_tiff, extra_offset + 64, 0.0, 0.0, 0.0, -0.37, 39.5, 0.0)
+        tiff_bytes = bytes(geo_tiff)
 
-    print("\nStep 2: Calling /api/verify-image...")
-    status, verify_data, elapsed_v = post_multipart(
+    status_v, v_data, _ = post_multipart(
         'http://localhost:3000/api/verify-image',
         {},
-        {'file': ('Spain_Sentinel2_B4B3B2_512.tif', tiff_bytes)}
+        {'file': (f'{name}.tif', tiff_bytes)}
     )
-    print(f"Verification HTTP Status: {status} in {elapsed_v:.1f}ms")
-    print(f"Verification ID: {verify_data.get('verification_id')}")
-    print(f"Status: {verify_data.get('status')}")
-    print(f"Accepted for inference: {verify_data.get('accepted_for_inference')}")
-    print(f"Dimensions check: {verify_data.get('checks', {}).get('dimensions')}")
-    print(f"Channels check: {verify_data.get('checks', {}).get('channels')}")
+    assert status_v == 200
+    v_id = v_data['verification_id']
 
-    assert status == 200, f"Expected 200, got {status}"
-    assert verify_data.get('accepted_for_inference') == True, "Expected accepted_for_inference=True"
-    v_id = verify_data['verification_id']
-
-    print("\nStep 3: Calling /api/analyze with verified token...")
-    status_a, analyze_data, elapsed_a = post_multipart(
+    status_a, a_data, elapsed_ms = post_multipart(
         'http://localhost:3000/api/analyze',
         {'verification_id': v_id, 'threshold': '0.5'},
-        {'file': ('Spain_Sentinel2_B4B3B2_512.tif', tiff_bytes)}
+        {'file': (f'{name}.tif', tiff_bytes)}
     )
-    print(f"Analyze HTTP Status: {status_a} in {elapsed_a:.1f}ms")
-    print(json.dumps(analyze_data, indent=2))
+    assert status_a == 200
+    print(f"Status: {status_a} ({elapsed_ms:.1f}ms)")
+    print(f"Analysis ID: {a_data.get('analysis_id')}")
+    print(f"Flood Detected: {a_data.get('flood_detected')}")
+    print(f"Flood Pixels: {a_data.get('flood_pixel_count')} / {a_data.get('valid_pixel_count')} ({a_data.get('coverage_percent')}%)")
+    print(f"Mean Confidence: {a_data.get('confidence_mean')}")
+    print(f"Physical Area: {a_data.get('physical_area_ha')} ha")
+    print(f"Method: {a_data.get('area_calculation_method')}")
+    return a_data
 
-    print("\nStep 4: Testing Geographic CRS GeoTIFF (EPSG:4326 in Spain, latitude ~39.5°N)...")
-    # scale_deg = 8.983152841195215e-05 (approx 10m at equator)
-    scale_deg = 8.983152841195215e-05
-    # Construct a geographic TIFF
-    geo_tiff_bytes = bytearray(tiff_bytes)
-    extra_offset = 8 + (2 + 14 * 12 + 4)
-    # ModelPixelScaleTag
-    struct.pack_into('<ddd', geo_tiff_bytes, extra_offset + 32, scale_deg, scale_deg, 0.0)
-    # ModelTiepointTag with latitude 39.5° N in Spain
-    struct.pack_into('<dddddd', geo_tiff_bytes, extra_offset + 64, 0.0, 0.0, 0.0, -0.37, 39.5, 0.0)
+def main():
+    # 1. Mixed prediction (24% water channel)
+    mixed_res = run_test_case('Sentinel2_Mixed_Scene', 'mixed')
+    assert mixed_res['flood_detected'] == True
+    assert 23.5 <= mixed_res['coverage_percent'] <= 24.5
+    assert mixed_res['flood_pixel_count'] == 62976
+    assert mixed_res['physical_area_ha'] == 629.76
 
-    status_gv, verify_data_g, _ = post_multipart(
-        'http://localhost:3000/api/verify-image',
-        {},
-        {'file': ('Spain_6537196_S2Hand_Geographic.tif', bytes(geo_tiff_bytes))}
-    )
-    assert status_gv == 200
-    v_id_g = verify_data_g['verification_id']
+    # 2. All-flood prediction (100% water)
+    flood_res = run_test_case('Sentinel2_All_Flood_Scene', 'all_flood')
+    assert flood_res['flood_detected'] == True
+    assert flood_res['coverage_percent'] == 100.0
+    assert flood_res['flood_pixel_count'] == 262144
+    assert flood_res['physical_area_ha'] == 2621.44
 
-    status_ga, analyze_data_g, _ = post_multipart(
-        'http://localhost:3000/api/analyze',
-        {'verification_id': v_id_g, 'threshold': '0.5'},
-        {'file': ('Spain_6537196_S2Hand_Geographic.tif', bytes(geo_tiff_bytes))}
-    )
-    print(f"Geographic GeoTIFF Area Calculation Result:")
-    print(f"  Physical Area (ha): {analyze_data_g.get('physical_area_ha')}")
-    print(f"  Calculation Method: {analyze_data_g.get('area_calculation_method')}")
-    print(f"  Notes: {analyze_data_g.get('physical_area_notes')}")
-    assert 'GEODESIC_WGS84_LAT_39.50N' in analyze_data_g.get('area_calculation_method')
-    # At latitude 39.5 N, cos(39.5) = 0.7716, so area should be ~77% of 2621.44 ha = ~2022 ha
-    print(f"  Ratio vs Equator/Projected: {analyze_data_g.get('physical_area_ha') / 2621.44:.4f}")
+    # 3. No-flood prediction (0% water, all land)
+    land_res = run_test_case('Sentinel2_No_Flood_Scene', 'no_flood')
+    assert land_res['flood_detected'] == False
+    assert land_res['coverage_percent'] == 0.0
+    assert land_res['flood_pixel_count'] == 0
+    assert land_res['physical_area_ha'] == 0.0
 
-    print("\nAll live verification & inference checks passed successfully!")
+    # 4. Mixed in Spain with Geographic Degree CRS
+    geo_res = run_test_case('Spain_Geographic_Mixed_Scene', 'mixed', is_geo=True)
+    assert geo_res['flood_detected'] == True
+    assert 23.5 <= geo_res['coverage_percent'] <= 24.5
+    # Area should be 629.76 * cos(39.5) = ~484 ha
+    assert 480.0 <= geo_res['physical_area_ha'] <= 490.0
+    assert 'GEODESIC_WGS84_LAT_39.50N' in geo_res['area_calculation_method']
+
+    print("\nAll regression scenarios (Mixed, All-Flood, No-Flood, Geographic CRS) verified successfully!")
 
 if __name__ == '__main__':
     main()

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion } from 'motion/react';
 import { 
   Layers, 
   Eye, 
@@ -21,15 +22,23 @@ import {
   ChevronRight,
   Columns,
   Navigation,
-  ShieldCheck
+  ShieldCheck,
+  CloudRain
 } from 'lucide-react';
 import { GLOBAL_DISASTERS, GlobalDisasterLocation } from '../data/globalDisasters';
 import { ExtrudedFloodTerrainR3F } from '../components/3d/ExtrudedFloodTerrainR3F';
 import { GoogleRealtimeMap } from '../components/map/GoogleRealtimeMap';
+import { LiveWeatherMap } from '../components/map/LiveWeatherMap';
+import { SideBySideCompareView } from '../components/map/SideBySideCompareView';
 import { MapLayerConfig, DEFAULT_LAYER_CONFIG } from '../components/map/LayerControl';
+import { AnalysisSummary } from '../types';
 
-export const MapView: React.FC = () => {
-  const [viewMode, setViewMode] = useState<'realtime-google' | '3d-terrain' | 'split-view'>('realtime-google');
+export interface MapViewProps {
+  activeAnalysis?: AnalysisSummary | null;
+}
+
+export const MapView: React.FC<MapViewProps> = ({ activeAnalysis }) => {
+  const [viewMode, setViewMode] = useState<'realtime-google' | 'live-weather' | '3d-terrain' | 'split-view'>('realtime-google');
   const [selectedHotspot, setSelectedHotspot] = useState<GlobalDisasterLocation>(GLOBAL_DISASTERS[0]);
   const [selectedContinent, setSelectedContinent] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -64,7 +73,7 @@ export const MapView: React.FC = () => {
   };
 
   // Toggle individual layers from the top header
-  const toggleLayer = (layerKey: 'satellite' | 'floodMask' | 'emergencyRoutes') => {
+  const toggleLayer = (layerKey: 'satellite' | 'floodMask' | 'confidenceHeatmap' | 'emergencyRoutes') => {
     setLayerConfig(prev => ({
       ...prev,
       [layerKey]: {
@@ -77,18 +86,24 @@ export const MapView: React.FC = () => {
   const activeLayersCount = [
     layerConfig.satellite.enabled,
     layerConfig.floodMask.enabled,
+    layerConfig.confidenceHeatmap.enabled,
     layerConfig.emergencyRoutes.enabled
   ].filter(Boolean).length;
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] w-full bg-slate-950 flex flex-col p-3 sm:p-5 space-y-3">
+    <motion.div 
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      className="min-h-[calc(100vh-4rem)] w-full bg-[#020613] flex flex-col p-3 sm:p-5 space-y-3 text-left"
+    >
       
       {/* Top Controls Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80 backdrop-blur-md shadow-lg">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 rounded-2xl glass-panel border border-slate-800 backdrop-blur-md shadow-lg">
         
         {/* Left: Active Location Details */}
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-cyan-950/80 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-cyan-950/80 border border-cyan-500/30 flex items-center justify-center text-cyan-400 shrink-0 shadow-[0_0_15px_rgba(6,182,212,0.2)]">
             {viewMode === '3d-terrain' ? (
               <Mountain className="w-5 h-5" />
             ) : viewMode === 'split-view' ? (
@@ -103,7 +118,9 @@ export const MapView: React.FC = () => {
                 {viewMode === '3d-terrain'
                   ? '3D Extruded Topography & Flood Inundation'
                   : viewMode === 'split-view'
-                  ? 'Dual Synced: Google Satellite + 3D Extrusion'
+                  ? 'Side-by-side View: Historical Baseline vs Flood Analysis'
+                  : viewMode === 'live-weather'
+                  ? 'Real-Time Radar & Precipitation Telemetry'
                   : 'Real-Time Google Satellite & Elevation Analysis'}
               </h1>
               <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
@@ -163,6 +180,26 @@ export const MapView: React.FC = () => {
             )}
           </button>
 
+          {/* Toggle Confidence Heatmap (Model Uncertainty) */}
+          <button
+            type="button"
+            onClick={() => toggleLayer('confidenceHeatmap')}
+            className={`px-2.5 py-1 text-xs font-mono rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              layerConfig.confidenceHeatmap.enabled
+                ? 'bg-amber-950 text-amber-300 border border-amber-500/50 font-bold shadow-[0_0_8px_rgba(245,158,11,0.25)]'
+                : 'bg-slate-900/60 text-slate-500 hover:text-slate-300 border border-slate-800'
+            }`}
+            title="Toggle Model Confidence Heatmap (Show areas of higher classification uncertainty)"
+          >
+            <Activity className="w-3.5 h-3.5 text-amber-400" />
+            <span>Confidence Heatmap</span>
+            {layerConfig.confidenceHeatmap.enabled ? (
+              <Eye className="w-3 h-3 text-amber-400" />
+            ) : (
+              <EyeOff className="w-3 h-3 text-slate-600" />
+            )}
+          </button>
+
           {/* Toggle Emergency Route Overlays */}
           <button
             type="button"
@@ -186,10 +223,10 @@ export const MapView: React.FC = () => {
 
         {/* Right: Mode Switcher & Sidebar Toggle */}
         <div className="flex items-center gap-2 self-end lg:self-auto">
-          <div className="p-1 rounded-lg bg-slate-950 border border-slate-800 flex items-center gap-1">
+          <div className="p-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1">
             <button
               onClick={() => setViewMode('realtime-google')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition-colors cursor-pointer ${
                 viewMode === 'realtime-google'
                   ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
                   : 'text-slate-400 hover:text-white'
@@ -200,8 +237,20 @@ export const MapView: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setViewMode('live-weather')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition-colors cursor-pointer ${
+                viewMode === 'live-weather'
+                  ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <CloudRain className="w-3.5 h-3.5" />
+              <span>Live Weather Map</span>
+            </button>
+
+            <button
               onClick={() => setViewMode('3d-terrain')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition-colors cursor-pointer ${
                 viewMode === '3d-terrain'
                   ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
                   : 'text-slate-400 hover:text-white'
@@ -213,20 +262,20 @@ export const MapView: React.FC = () => {
 
             <button
               onClick={() => setViewMode('split-view')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded transition-colors cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition-colors cursor-pointer ${
                 viewMode === 'split-view'
                   ? 'bg-cyan-500 text-slate-950 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Columns className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Dual View</span>
+              <span className="hidden sm:inline">Side-by-side View</span>
             </button>
           </div>
 
           <button
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className={`px-3 py-2 text-xs font-mono rounded-lg border transition-colors flex items-center gap-1.5 cursor-pointer ${
+            className={`px-3 py-2 text-xs font-mono rounded-xl border transition-colors flex items-center gap-1.5 cursor-pointer ${
               isSidebarOpen
                 ? 'bg-cyan-950/80 border-cyan-500/40 text-cyan-300'
                 : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
@@ -253,6 +302,15 @@ export const MapView: React.FC = () => {
               onSwitchTo3D={handleSwitchTo3D}
               layerConfig={layerConfig}
               onLayerConfigChange={setLayerConfig}
+              activeAnalysis={activeAnalysis}
+              className="w-full"
+            />
+          )}
+
+          {viewMode === 'live-weather' && (
+            <LiveWeatherMap
+              selectedLocation={selectedHotspot}
+              onSelectLocation={handleSelectLocation}
               className="w-full"
             />
           )}
@@ -278,40 +336,18 @@ export const MapView: React.FC = () => {
           )}
 
           {viewMode === 'split-view' && (
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              <GoogleRealtimeMap
-                locations={filteredDisasters}
-                selectedLocation={selectedHotspot}
-                onSelectLocation={handleSelectLocation}
-                onSwitchTo3D={handleSwitchTo3D}
-                layerConfig={layerConfig}
-                onLayerConfigChange={setLayerConfig}
-                className="w-full"
-              />
-              <ExtrudedFloodTerrainR3F
-                key={`split-${selectedHotspot.id}`}
-                selectedLocation={`${selectedHotspot.name}, ${selectedHotspot.country}`}
-                terrainType={selectedHotspot.terrainType}
-                floodCoveragePercent={
-                  layerConfig.floodMask.enabled
-                    ? Math.min(85, Math.max(15, (selectedHotspot.estimatedInundationHa / 1500) * layerConfig.floodMask.opacity))
-                    : 0
-                }
-                initialWaterLevel={
-                  layerConfig.floodMask.enabled
-                    ? Math.min(0.8, Math.max(0.2, (selectedHotspot.peakFloodStageMeters / 10) * layerConfig.floodMask.opacity))
-                    : 0.05
-                }
-                extrusionScale={2.0}
-                className="w-full"
-              />
-            </div>
+            <SideBySideCompareView
+              key={`side-by-side-${selectedHotspot.id}`}
+              selectedLocation={selectedHotspot}
+              activeAnalysis={activeAnalysis}
+              className="w-full"
+            />
           )}
         </div>
 
         {/* Global Disaster Catalog Sidebar */}
         {isSidebarOpen && (
-          <div className="w-full lg:col-span-4 xl:col-span-3 rounded-2xl bg-slate-900/80 border border-slate-800/80 backdrop-blur-md p-3.5 space-y-3 shadow-xl">
+          <div className="w-full lg:col-span-4 xl:col-span-3 rounded-2xl glass-panel p-3.5 space-y-3 shadow-xl">
             
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
               <div className="flex items-center gap-2">
@@ -333,7 +369,7 @@ export const MapView: React.FC = () => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search country, river, basin..."
-                className="w-full pl-8 pr-3 py-1.5 text-xs font-mono rounded-lg bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
+                className="w-full pl-8 pr-3 py-1.5 text-xs font-mono rounded-xl bg-slate-950 border border-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
               />
             </div>
 
@@ -347,7 +383,7 @@ export const MapView: React.FC = () => {
                   <button
                     key={c}
                     onClick={() => setSelectedContinent(isAll ? 'All' : contKey)}
-                    className={`px-2 py-1 text-[10px] font-mono rounded transition-colors cursor-pointer ${
+                    className={`px-2 py-1 text-[10px] font-mono rounded-lg transition-colors cursor-pointer ${
                       isSelected
                         ? 'bg-cyan-500 text-slate-950 font-bold'
                         : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
@@ -374,9 +410,9 @@ export const MapView: React.FC = () => {
                     }`}
                   >
                     <div className="space-y-0.5 min-w-0">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <MapPin className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-cyan-400' : 'text-slate-400'}`} />
-                        <span className="truncate">{spot.country} · {spot.name}</span>
+                      <div className="font-bold flex items-start gap-1.5">
+                        <MapPin className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${isSelected ? 'text-cyan-400' : 'text-slate-400'}`} />
+                        <span className="leading-snug">{spot.country} · {spot.name}</span>
                       </div>
                       <div className="text-[10px] text-slate-400 truncate">
                         {spot.region} · {spot.event}
@@ -402,7 +438,7 @@ export const MapView: React.FC = () => {
             </div>
 
             {/* Tactical Overlays Status Card */}
-            <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-400 space-y-1.5">
+            <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-mono text-slate-400 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-cyan-400 font-bold flex items-center gap-1">
                   <Layers className="w-3 h-3" />
@@ -428,6 +464,6 @@ export const MapView: React.FC = () => {
 
       </div>
 
-    </div>
+    </motion.div>
   );
 };

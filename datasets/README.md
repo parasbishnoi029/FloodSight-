@@ -31,6 +31,9 @@ datasets/
     └── README.md
 ```
 
+> **Note on Split CSV Chip Identifiers**:
+> The standard Sen1Floods11 benchmark split CSVs (`flood_train_data.csv`, `flood_val_data.csv`, `flood_test_data.csv`) list filenames referencing `_S1Hand.tif` chip identifiers. For optical flood segmentation pipelines, the dataset loader automatically replaces `_S1Hand.tif` with `_S2Hand.tif` to load the corresponding multi-spectral Sentinel-2 optical tiles while pairing them with the identical ground-truth `_LabelHand.tif` masks.
+
 ---
 
 ## Download & Acquisition Procedure

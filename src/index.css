@@ -1,20 +1,156 @@
 @import "tailwindcss";
+@import "./styles/print.css";
 
-/* Sleek Dark Scrollbar for Spatial Views */
+:root {
+  --bg-main: #080D14;
+  --surface-glass: rgba(16, 25, 37, 0.78);
+  --surface-glass-elevated: rgba(22, 34, 49, 0.82);
+  --border-glass: rgba(148, 170, 195, 0.16);
+  --border-glass-subtle: rgba(148, 170, 195, 0.10);
+  --text-primary: #F3F5F7;
+  --text-secondary: #AAB8C8;
+  --text-muted: #6E8096;
+  --accent-teal: #39B8C8;
+  --accent-hover: #55CAD6;
+  --accent-pressed: #269AA9;
+  --accent-subtle: rgba(57, 184, 200, 0.12);
+  --ease-cinematic: cubic-bezier(0.2, 0, 0, 1);
+}
+
+@layer base {
+  body {
+    background-color: #080D14;
+    color: #F3F5F7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background-color: rgba(57, 184, 200, 0.28);
+    color: #F3F5F7;
+  }
+}
+
+/* Master Precision Transparent Glass Surfaces */
+.glass-panel {
+  background-color: rgba(16, 25, 37, 0.78);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  border: 1px solid rgba(148, 170, 195, 0.16);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05), 0 8px 24px -4px rgba(0, 0, 0, 0.35);
+  transition: all 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.glass-panel-elevated {
+  background-color: rgba(22, 34, 49, 0.82);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  border: 1px solid rgba(148, 170, 195, 0.16);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 12px 32px -4px rgba(0, 0, 0, 0.45);
+  transition: all 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.glass-card {
+  background-color: rgba(16, 25, 37, 0.78);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  border: 1px solid rgba(148, 170, 195, 0.16);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+  transition: all 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.glass-card:hover {
+  background-color: rgba(22, 34, 49, 0.80);
+  border-color: rgba(57, 184, 200, 0.32);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.08), 0 8px 24px -4px rgba(0, 0, 0, 0.4);
+}
+
+/* Button Transitions: 160ms transition and max 1px hover lift */
+.btn-cinematic-primary {
+  background-color: #39B8C8;
+  color: #080D14;
+  font-weight: 600;
+  border-radius: 10px;
+  transition: all 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.btn-cinematic-primary:hover {
+  background-color: #55CAD6;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px 0 rgba(57, 184, 200, 0.28);
+}
+
+.btn-cinematic-primary:active {
+  background-color: #269AA9;
+  transform: translateY(0);
+}
+
+.btn-cinematic-secondary {
+  background-color: rgba(16, 25, 37, 0.76);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  color: #F3F5F7;
+  border: 1px solid rgba(148, 170, 195, 0.16);
+  border-radius: 10px;
+  transition: all 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.btn-cinematic-secondary:hover {
+  background-color: rgba(22, 34, 49, 0.88);
+  border-color: rgba(57, 184, 200, 0.32);
+  transform: translateY(-1px);
+  color: #FFFFFF;
+}
+
+.btn-cinematic-secondary:active {
+  transform: translateY(0);
+}
+
+/* Subtle Natural Atmospheric Radiance Behind Earth */
+.atmospheric-earth-glow {
+  background: radial-gradient(
+    circle at 55% 50%,
+    rgba(28, 56, 82, 0.35) 0%,
+    rgba(16, 35, 54, 0.18) 38%,
+    rgba(8, 13, 20, 0) 70%
+  );
+  filter: blur(52px);
+  pointer-events: none;
+}
+
+/* Tabular Numerals for Technical & Geospatial Metrics */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Clean Precision Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #020617;
+  background: #080D14;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 9999px;
+  background: rgba(148, 170, 195, 0.22);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #06b6d4;
+  background: #39B8C8;
+}
+
+/* Reduced motion respect */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

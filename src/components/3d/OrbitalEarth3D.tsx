@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { GLOBAL_DISASTERS, GlobalDisasterLocation } from '../../data/globalDisasters';
-import { Globe, MapPin, Eye, Satellite, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Globe, ZoomIn, ZoomOut, RotateCcw, X } from 'lucide-react';
 
 interface OrbitalEarth3DProps {
   className?: string;
@@ -16,33 +16,91 @@ export const OrbitalEarth3D: React.FC<OrbitalEarth3DProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const [activeHotspot, setActiveHotspot] = useState<GlobalDisasterLocation | null>(null);
-  const [selectedContinent, setSelectedContinent] = useState<string>('All');
-  const [isHovered, setIsHovered] = useState(false);
+  const [hoveredHotspot, setHoveredHotspot] = useState<GlobalDisasterLocation | null>(null);
   const [webGlAvailable, setWebGlAvailable] = useState<boolean>(true);
 
-  // References to communicate with active Three.js scene
+  // References for Three.js scene communication
   const globeGroupRef = useRef<THREE.Group | null>(null);
-  const targetRotationRef = useRef<{ x: number; y: number }>({ x: 0.35, y: 0 });
+  const cloudsRef = useRef<THREE.Mesh | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const isAnimatingFlightRef = useRef<boolean>(false);
+  const flightProgressRef = useRef<number>(1.0);
+  const flightStartRotationRef = useRef<{ x: number; y: number }>({ x: 0.35, y: -0.8 });
+  const flightTargetRotationRef = useRef<{ x: number; y: number }>({ x: 0.35, y: -0.8 });
+  const flightStartZoomRef = useRef<number>(2.9);
+  const flightTargetZoomRef = useRef<number>(2.9);
+  const currentCameraZRef = useRef<number>(2.9);
 
-  const filteredDisasters = selectedContinent === 'All'
-    ? GLOBAL_DISASTERS
-    : GLOBAL_DISASTERS.filter((d) => d.continent === selectedContinent);
-
-  // Smoothly rotate globe to focus on a specific lat/lon
-  const focusOnCoordinates = (lat: number, lon: number) => {
+  // Smoothly rotate globe and transition camera to focus on coordinates
+  const focusOnCoordinates = useCallback((lat: number, lon: number) => {
     const phi = (90 - lat) * (Math.PI / 180);
     const theta = (lon + 180) * (Math.PI / 180);
 
-    // Target rotation to bring the point facing camera (+Z)
-    targetRotationRef.current.y = -theta + Math.PI / 2;
-    targetRotationRef.current.x = (lat * Math.PI) / 180 * 0.4;
-  };
+    const globeGroup = globeGroupRef.current;
+    const currentRotY = globeGroup ? globeGroup.rotation.y : -0.8;
+    const currentRotX = globeGroup ? globeGroup.rotation.x : 0.35;
 
-  const handleSelectSpot = (spot: GlobalDisasterLocation) => {
+    let targetY = -theta + Math.PI / 2;
+    const targetX = (lat * Math.PI) / 180 * 0.45;
+
+    const twoPi = Math.PI * 2;
+    let deltaY = (targetY - currentRotY) % twoPi;
+    if (deltaY > Math.PI) deltaY -= twoPi;
+    if (deltaY < -Math.PI) deltaY += twoPi;
+
+    flightStartRotationRef.current = { x: currentRotX, y: currentRotY };
+    flightTargetRotationRef.current = { x: targetX, y: currentRotY + deltaY };
+    flightStartZoomRef.current = currentCameraZRef.current;
+    flightTargetZoomRef.current = 1.95;
+
+    flightProgressRef.current = 0.0;
+    isAnimatingFlightRef.current = true;
+  }, []);
+
+  const resetView = useCallback(() => {
+    const globeGroup = globeGroupRef.current;
+    const currentRotY = globeGroup ? globeGroup.rotation.y : -0.8;
+    const currentRotX = globeGroup ? globeGroup.rotation.x : 0.35;
+
+    flightStartRotationRef.current = { x: currentRotX, y: currentRotY };
+    flightTargetRotationRef.current = { x: 0.3, y: currentRotY + 0.3 };
+    flightStartZoomRef.current = currentCameraZRef.current;
+    flightTargetZoomRef.current = 2.9;
+
+    flightProgressRef.current = 0.0;
+    isAnimatingFlightRef.current = true;
+    setActiveHotspot(null);
+  }, []);
+
+  const zoomIn = useCallback(() => {
+    if (cameraRef.current) {
+      currentCameraZRef.current = Math.max(1.6, currentCameraZRef.current - 0.35);
+      cameraRef.current.position.z = currentCameraZRef.current;
+    }
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    if (cameraRef.current) {
+      currentCameraZRef.current = Math.min(4.0, currentCameraZRef.current + 0.35);
+      cameraRef.current.position.z = currentCameraZRef.current;
+    }
+  }, []);
+
+  const handleSelectSpot = useCallback((spot: GlobalDisasterLocation) => {
     setActiveHotspot(spot);
     focusOnCoordinates(spot.lat, spot.lon);
     onSelectHotspot?.(spot);
-  };
+  }, [focusOnCoordinates, onSelectHotspot]);
+
+  useEffect(() => {
+    if (activeHotspotId) {
+      const target = GLOBAL_DISASTERS.find((d) => d.id === activeHotspotId);
+      if (target) {
+        setActiveHotspot(target);
+        focusOnCoordinates(target.lat, target.lon);
+      }
+    }
+  }, [activeHotspotId, focusOnCoordinates]);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -52,147 +110,77 @@ export const OrbitalEarth3D: React.FC<OrbitalEarth3DProps> = ({
     let animationFrameId = 0;
 
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const width = container.clientWidth || 500;
-    const height = container.clientHeight || 500;
+    const width = container.clientWidth || 600;
+    const height = container.clientHeight || 600;
 
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     } catch {
       setWebGlAvailable(false);
       return;
     }
 
-    // 1. Scene & Camera
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
-    camera.position.z = 2.9;
+    const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 1000);
+    camera.position.z = currentCameraZRef.current;
+    cameraRef.current = camera;
 
-    // 2. High-DPI WebGL Renderer
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     container.appendChild(renderer.domElement);
 
-    // Root rotation group with Earth axial tilt (~23.4 deg)
     const globeGroup = new THREE.Group();
+    // Tilt to show Europe, Africa, Atlantic, and Americas naturally
     globeGroup.rotation.x = 0.35;
+    globeGroup.rotation.y = -0.8;
     globeGroupRef.current = globeGroup;
     scene.add(globeGroup);
 
-    // 3. Earth Core Sphere (Deep Obsidian Ocean)
-    const sphereGeo = new THREE.SphereGeometry(1, 64, 64);
-    const sphereMat = new THREE.MeshBasicMaterial({
-      color: 0x020712,
+    // Natural lighting: Sun from upper right + soft ambient
+    const sunLight = new THREE.DirectionalLight(0xfff6ea, 2.8);
+    sunLight.position.set(6, 3.5, 4.5);
+    scene.add(sunLight);
+
+    const ambientLight = new THREE.AmbientLight(0x182032, 0.85);
+    scene.add(ambientLight);
+
+    const textureLoader = new THREE.TextureLoader();
+
+    // 1. Genuine NASA Blue Marble Earth Texture & Specular Map
+    const earthTexture = textureLoader.load('/textures/earth_atmos_2048.jpg');
+    earthTexture.colorSpace = THREE.SRGBColorSpace;
+
+    const specularTexture = textureLoader.load('/textures/earth_specular_2048.jpg');
+
+    const earthGeo = new THREE.SphereGeometry(1, 64, 64);
+    const earthMat = new THREE.MeshPhongMaterial({
+      map: earthTexture,
+      specularMap: specularTexture,
+      specular: new THREE.Color(0x384c68),
+      shininess: 18,
+      bumpScale: 0.02,
+    });
+    const earthMesh = new THREE.Mesh(earthGeo, earthMat);
+    globeGroup.add(earthMesh);
+
+    // 2. Realistic Semi-Transparent Cloud Layer
+    const cloudsTexture = textureLoader.load('/textures/earth_clouds_1024.png');
+    const cloudsGeo = new THREE.SphereGeometry(1.006, 64, 64);
+    const cloudsMat = new THREE.MeshLambertMaterial({
+      map: cloudsTexture,
       transparent: true,
-      opacity: 0.98,
+      opacity: 0.78,
+      blending: THREE.NormalBlending,
     });
-    const earthSphere = new THREE.Mesh(sphereGeo, sphereMat);
-    globeGroup.add(earthSphere);
+    const cloudsMesh = new THREE.Mesh(cloudsGeo, cloudsMat);
+    globeGroup.add(cloudsMesh);
+    cloudsRef.current = cloudsMesh;
 
-    // 4. Geodetic Lat/Long Coordinate Grid
-    const wireframeGeo = new THREE.WireframeGeometry(new THREE.SphereGeometry(1.002, 32, 18));
-    const wireframeMat = new THREE.LineBasicMaterial({
-      color: 0x0284c7,
-      transparent: true,
-      opacity: 0.15,
-    });
-    const wireframe = new THREE.LineSegments(wireframeGeo, wireframeMat);
-    globeGroup.add(wireframe);
-
-    // 5. Global Continental Landmass Particle Matrix
-    const dotCount = 3200;
-    const positions: number[] = [];
-    const colors: number[] = [];
-
-    const cyanColor = new THREE.Color(0x38bdf8);
-    const deepBlueColor = new THREE.Color(0x0284c7);
-    const emeraldColor = new THREE.Color(0x10b981);
-
-    for (let i = 0; i < dotCount; i++) {
-      const phi = Math.acos(-1 + (2 * i) / dotCount);
-      const theta = Math.sqrt(dotCount * Math.PI) * phi;
-
-      const lat = (Math.PI / 2 - phi) * (180 / Math.PI);
-      const lon = (theta * (180 / Math.PI)) % 360 - 180;
-
-      // Realistic global continental landmass filter
-      const isLand =
-        (lat > 10 && lat < 72 && lon > -168 && lon < -50) || // North America
-        (lat > -56 && lat < 12 && lon > -82 && lon < -34) ||  // South America
-        (lat > 35 && lat < 72 && lon > -10 && lon < 60) ||    // Europe
-        (lat > -36 && lat < 38 && lon > -18 && lon < 52) ||   // Africa
-        (lat > 5 && lat < 76 && lon > 58 && lon < 155) ||     // Asia
-        (lat > -48 && lat < -10 && lon > 110 && lon < 180);   // Oceania & NZ
-
-      if (isLand || Math.random() < 0.05) {
-        const r = 1.006;
-        const x = r * Math.sin(phi) * Math.cos(theta);
-        const y = r * Math.cos(phi);
-        const z = r * Math.sin(phi) * Math.sin(theta);
-
-        positions.push(x, y, z);
-
-        const rnd = Math.random();
-        const c = rnd > 0.6 ? cyanColor : (rnd > 0.2 ? deepBlueColor : emeraldColor);
-        colors.push(c.r, c.g, c.b);
-      }
-    }
-
-    const pointGeo = new THREE.BufferGeometry();
-    pointGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    pointGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-    const pointMat = new THREE.PointsMaterial({
-      size: 0.015,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.88,
-    });
-    const pointCloud = new THREE.Points(pointGeo, pointMat);
-    globeGroup.add(pointCloud);
-
-    // 6. Global Disaster Pins & Pulse Rings
-    const pinGroup = new THREE.Group();
-    globeGroup.add(pinGroup);
-
-    const hotspotMarkers: { mesh: THREE.Mesh; ring: THREE.Mesh; data: GlobalDisasterLocation }[] = [];
-
-    GLOBAL_DISASTERS.forEach((hotspot) => {
-      const phi = (90 - hotspot.lat) * (Math.PI / 180);
-      const theta = (hotspot.lon + 180) * (Math.PI / 180);
-
-      const r = 1.02;
-      const x = -(r * Math.sin(phi) * Math.cos(theta));
-      const z = (r * Math.sin(phi) * Math.sin(theta));
-      const y = (r * Math.cos(phi));
-
-      // Hotspot Pin
-      const pinGeo = new THREE.SphereGeometry(0.022, 16, 16);
-      const pinMat = new THREE.MeshBasicMaterial({
-        color: hotspot.severity === 'Catastrophic' ? 0xef4444 : (hotspot.severity === 'Severe' ? 0x06b6d4 : 0x10b981),
-      });
-      const pinMesh = new THREE.Mesh(pinGeo, pinMat);
-      pinMesh.position.set(x, y, z);
-
-      // Hotspot Pulse Ring
-      const ringGeo = new THREE.RingGeometry(0.026, 0.040, 32);
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: hotspot.severity === 'Catastrophic' ? 0xef4444 : 0x38bdf8,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: 0.8,
-      });
-      const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-      ringMesh.position.set(x, y, z);
-      ringMesh.lookAt(new THREE.Vector3(x * 2, y * 2, z * 2));
-
-      pinGroup.add(pinMesh);
-      pinGroup.add(ringMesh);
-      hotspotMarkers.push({ mesh: pinMesh, ring: ringMesh, data: hotspot });
-    });
-
-    // 7. Atmospheric Glow Fresnel Shader
-    const glowGeo = new THREE.SphereGeometry(1.18, 32, 32);
-    const glowMat = new THREE.ShaderMaterial({
+    // 3. Physically Plausible Atmospheric Rayleigh Rim Shader
+    const atmosphereGeo = new THREE.SphereGeometry(1.055, 48, 48);
+    const atmosphereMat = new THREE.ShaderMaterial({
       vertexShader: `
         varying vec3 vNormal;
         void main() {
@@ -203,95 +191,148 @@ export const OrbitalEarth3D: React.FC<OrbitalEarth3DProps> = ({
       fragmentShader: `
         varying vec3 vNormal;
         void main() {
-          float intensity = pow(0.65 - dot(vNormal, vec3(0, 0, 1.0)), 2.0);
-          gl_FragColor = vec4(0.04, 0.72, 0.96, 1.0) * intensity * 0.8;
+          float intensity = pow(0.68 - dot(vNormal, vec3(0, 0, 1.0)), 2.6);
+          gl_FragColor = vec4(0.35, 0.65, 0.95, 0.45) * intensity;
         }
       `,
       blending: THREE.AdditiveBlending,
       side: THREE.BackSide,
       transparent: true,
     });
-    const atmosphere = new THREE.Mesh(glowGeo, glowMat);
-    scene.add(atmosphere);
+    const atmosphereMesh = new THREE.Mesh(atmosphereGeo, atmosphereMat);
+    scene.add(atmosphereMesh);
 
-    // 8. Sentinel-2 Orbital Constellation Trajectory
-    const orbitRadius = 1.48;
-    const orbitCurve = new THREE.EllipseCurve(0, 0, orbitRadius, orbitRadius * 0.94, 0, 2 * Math.PI, false, 0);
-    const orbitPoints = orbitCurve.getPoints(120);
-    const orbitGeo = new THREE.BufferGeometry().setFromPoints(
-      orbitPoints.map((p) => new THREE.Vector3(p.x, 0, p.y))
-    );
-    const orbitMat = new THREE.LineDashedMaterial({
-      color: 0x38bdf8,
-      dashSize: 0.06,
-      gapSize: 0.03,
-      transparent: true,
-      opacity: 0.55,
+    // 4. Subtle, Real Geographic Location Markers
+    const pinGroup = new THREE.Group();
+    globeGroup.add(pinGroup);
+
+    const hotspotMeshes: THREE.Object3D[] = [];
+
+    GLOBAL_DISASTERS.forEach((hotspot) => {
+      const phi = (90 - hotspot.lat) * (Math.PI / 180);
+      const theta = (hotspot.lon + 180) * (Math.PI / 180);
+
+      const rBase = 1.006;
+      const rTip = 1.05;
+
+      const xBase = -(rBase * Math.sin(phi) * Math.cos(theta));
+      const zBase = (rBase * Math.sin(phi) * Math.sin(theta));
+      const yBase = (rBase * Math.cos(phi));
+
+      const xTip = -(rTip * Math.sin(phi) * Math.cos(theta));
+      const zTip = (rTip * Math.sin(phi) * Math.sin(theta));
+      const yTip = (rTip * Math.cos(phi));
+
+      const posVec = new THREE.Vector3(xTip, yTip, zTip);
+      const baseVec = new THREE.Vector3(xBase, yBase, zBase);
+
+      // Hairline stem connecting surface to pin head
+      const stemGeo = new THREE.BufferGeometry().setFromPoints([baseVec, posVec]);
+      const stemMat = new THREE.LineBasicMaterial({
+        color: hotspot.severity === 'Catastrophic' ? 0xf43f5e : 0x38bdf8,
+        transparent: true,
+        opacity: 0.65,
+      });
+      const stemLine = new THREE.Line(stemGeo, stemMat);
+      pinGroup.add(stemLine);
+
+      // Clean pin head
+      const pinGeo = new THREE.SphereGeometry(0.016, 16, 16);
+      const pinMat = new THREE.MeshBasicMaterial({
+        color: hotspot.severity === 'Catastrophic' ? 0xf43f5e : 0x0284c7,
+      });
+      const pinMesh = new THREE.Mesh(pinGeo, pinMat);
+      pinMesh.position.copy(posVec);
+      pinMesh.userData = { hotspot };
+
+      pinGroup.add(pinMesh);
+      hotspotMeshes.push(pinMesh);
     });
-    const orbitLine = new THREE.Line(orbitGeo, orbitMat);
-    orbitLine.computeLineDistances();
-    orbitLine.rotation.x = Math.PI / 3.8;
-    orbitLine.rotation.y = Math.PI / 5.2;
-    scene.add(orbitLine);
 
-    // Satellite Model
-    const satGroup = new THREE.Group();
-    const satBodyGeo = new THREE.BoxGeometry(0.045, 0.022, 0.022);
-    const satBodyMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
-    const satMesh = new THREE.Mesh(satBodyGeo, satBodyMat);
-    satGroup.add(satMesh);
+    // 5. Interactive Drag & Raycasting
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
 
-    // Solar panels
-    const panelGeo = new THREE.PlaneGeometry(0.09, 0.028);
-    const panelMat = new THREE.MeshBasicMaterial({ color: 0x0284c7, side: THREE.DoubleSide });
-    const leftPanel = new THREE.Mesh(panelGeo, panelMat);
-    leftPanel.position.x = -0.068;
-    const rightPanel = new THREE.Mesh(panelGeo, panelMat);
-    rightPanel.position.x = 0.068;
-    satGroup.add(leftPanel);
-    satGroup.add(rightPanel);
-
-    // Downlink Laser Beam
-    const beamGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)]);
-    const beamMat = new THREE.LineBasicMaterial({
-      color: 0x22d3ee,
-      transparent: true,
-      opacity: 0.45,
-    });
-    const beamLine = new THREE.Line(beamGeo, beamMat);
-    scene.add(beamLine);
-    scene.add(satGroup);
-
-    // 9. Interactive Drag & Dynamic Rotation
     let isDragging = false;
+    let dragDistance = 0;
     let previousMousePosition = { x: 0, y: 0 };
-    let orbitAngle = 0;
-    let pulseScale = 1;
-    let pulseDirection = 1;
+
+    const getNDCCoordinates = (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      return {
+        x: ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        y: -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      };
+    };
 
     const onMouseDown = (e: MouseEvent) => {
       isDragging = true;
+      dragDistance = 0;
       previousMousePosition = { x: e.clientX, y: e.clientY };
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      const deltaX = e.clientX - previousMousePosition.x;
-      const deltaY = e.clientY - previousMousePosition.y;
+      const ndc = getNDCCoordinates(e);
+      mouse.x = ndc.x;
+      mouse.y = ndc.y;
 
-      targetRotationRef.current.y += deltaX * 0.006;
-      targetRotationRef.current.x = Math.max(-1.0, Math.min(1.0, targetRotationRef.current.x + deltaY * 0.006));
+      if (isDragging) {
+        const deltaX = e.clientX - previousMousePosition.x;
+        const deltaY = e.clientY - previousMousePosition.y;
+        dragDistance += Math.abs(deltaX) + Math.abs(deltaY);
 
-      previousMousePosition = { x: e.clientX, y: e.clientY };
+        if (globeGroup) {
+          globeGroup.rotation.y += deltaX * 0.005;
+          globeGroup.rotation.x = Math.max(-1.1, Math.min(1.1, globeGroup.rotation.x + deltaY * 0.005));
+        }
+
+        previousMousePosition = { x: e.clientX, y: e.clientY };
+      } else {
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(hotspotMeshes, false);
+
+        if (intersects.length > 0) {
+          const targetSpot = intersects[0].object.userData?.hotspot as GlobalDisasterLocation | undefined;
+          if (targetSpot) {
+            container.style.cursor = 'pointer';
+            setHoveredHotspot(targetSpot);
+          }
+        } else {
+          container.style.cursor = 'grab';
+          setHoveredHotspot(null);
+        }
+      }
     };
 
-    const onMouseUp = () => {
+    const onMouseUp = (e: MouseEvent) => {
+      if (dragDistance < 5) {
+        const ndc = getNDCCoordinates(e);
+        mouse.x = ndc.x;
+        mouse.y = ndc.y;
+
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObjects(hotspotMeshes, false);
+
+        if (intersects.length > 0) {
+          const clickedSpot = intersects[0].object.userData?.hotspot as GlobalDisasterLocation | undefined;
+          if (clickedSpot) {
+            handleSelectSpot(clickedSpot);
+          }
+        }
+      }
       isDragging = false;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      currentCameraZRef.current = Math.max(1.6, Math.min(4.0, currentCameraZRef.current + e.deltaY * 0.002));
+      camera.position.z = currentCameraZRef.current;
     };
 
     container.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+    container.addEventListener('wheel', onWheel, { passive: false });
 
     const handleResize = () => {
       if (!container) return;
@@ -303,42 +344,40 @@ export const OrbitalEarth3D: React.FC<OrbitalEarth3DProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
-    // 10. Animation Loop
+    // Render loop
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
 
-      if (!prefersReducedMotion && !isDragging) {
-        targetRotationRef.current.y += 0.0018;
+      // Smooth camera flight transition (600-800ms smooth easing)
+      if (isAnimatingFlightRef.current) {
+        flightProgressRef.current += 0.022;
+        if (flightProgressRef.current >= 1.0) {
+          flightProgressRef.current = 1.0;
+          isAnimatingFlightRef.current = false;
+        }
+
+        const t = flightProgressRef.current;
+        // Cubic ease curve
+        const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+        if (globeGroup) {
+          globeGroup.rotation.x = flightStartRotationRef.current.x + (flightTargetRotationRef.current.x - flightStartRotationRef.current.x) * ease;
+          globeGroup.rotation.y = flightStartRotationRef.current.y + (flightTargetRotationRef.current.y - flightStartRotationRef.current.y) * ease;
+        }
+
+        const arcBonus = Math.sin(t * Math.PI) * 0.35;
+        const baseZ = flightStartZoomRef.current + (flightTargetZoomRef.current - flightStartZoomRef.current) * ease;
+        currentCameraZRef.current = baseZ + arcBonus;
+        camera.position.z = currentCameraZRef.current;
+      } else if (!isDragging && !prefersReducedMotion && globeGroup) {
+        // Slow natural planetary rotation
+        globeGroup.rotation.y += 0.0008;
       }
 
-      globeGroup.rotation.y += (targetRotationRef.current.y - globeGroup.rotation.y) * 0.08;
-      globeGroup.rotation.x += (targetRotationRef.current.x - globeGroup.rotation.x) * 0.08;
-
-      // Pulse ring scaling
-      pulseScale += 0.015 * pulseDirection;
-      if (pulseScale > 1.6) pulseDirection = -1;
-      if (pulseScale < 0.9) pulseDirection = 1;
-
-      hotspotMarkers.forEach(({ ring }) => {
-        ring.scale.set(pulseScale, pulseScale, 1);
-      });
-
-      // Satellite Trajectory
-      if (!prefersReducedMotion) {
-        orbitAngle += 0.012;
+      // Clouds rotate slightly faster for realistic atmospheric depth
+      if (cloudsRef.current && !prefersReducedMotion) {
+        cloudsRef.current.rotation.y += 0.0002;
       }
-      const satX = orbitRadius * Math.cos(orbitAngle);
-      const satZ = (orbitRadius * 0.94) * Math.sin(orbitAngle);
-
-      const satPos = new THREE.Vector3(satX, 0, satZ);
-      satPos.applyAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 3.8);
-      satPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 5.2);
-      satGroup.position.copy(satPos);
-      satGroup.lookAt(0, 0, 0);
-
-      // Downlink Beam Target
-      const targetPos = satPos.clone().normalize().multiplyScalar(1.0);
-      beamGeo.setFromPoints([satPos, targetPos]);
 
       renderer.render(scene, camera);
     };
@@ -350,119 +389,102 @@ export const OrbitalEarth3D: React.FC<OrbitalEarth3DProps> = ({
       container.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      container.removeEventListener('wheel', onWheel);
       window.removeEventListener('resize', handleResize);
 
       renderer.dispose();
-      sphereGeo.dispose();
-      wireframeGeo.dispose();
-      pointGeo.dispose();
-      glowGeo.dispose();
-      orbitGeo.dispose();
-      satBodyGeo.dispose();
-      panelGeo.dispose();
-      beamGeo.dispose();
+      earthGeo.dispose();
+      earthMat.dispose();
+      cloudsGeo.dispose();
+      cloudsMat.dispose();
+      atmosphereGeo.dispose();
+      atmosphereMat.dispose();
+      earthTexture.dispose();
+      specularTexture.dispose();
+      cloudsTexture.dispose();
 
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
     };
-  }, []);
+  }, [handleSelectSpot]);
 
   return (
-    <div
-      ref={mountRef}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      className={`relative cursor-grab active:cursor-grabbing select-none ${className}`}
-      style={{ touchAction: 'none' }}
-    >
-      {/* Telemetry HUD */}
-      {!webGlAvailable && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950/90 text-center p-6 space-y-2">
-          <Globe className="w-10 h-10 text-cyan-400 opacity-60 animate-pulse" />
-          <p className="text-xs font-mono font-bold text-slate-200">
-            WebGL Context Unavailable
-          </p>
-          <p className="text-[11px] text-slate-400 max-w-sm">
-            Interactive 3D Earth Globe is operating in 2D Disaster Telemetry mode. Select an epicenter below to monitor flood zones.
-          </p>
-        </div>
-      )}
-      <div className="absolute top-3 left-3 pointer-events-none text-xs font-mono text-slate-300 space-y-1">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-          <span className="font-semibold text-cyan-300">GLOBAL EARTH OBSERVATION CONSTELLATION</span>
-        </div>
-        <p className="text-[11px] text-slate-400">
-          20 Monitored Disaster Epicenters Across 6 Continents · Sentinel-2 MSI
-        </p>
+    <div className={`relative w-full h-full flex flex-col items-center justify-center select-none ${className}`}>
+      
+      {/* 3D WebGL Canvas Stage */}
+      <div
+        ref={mountRef}
+        className="w-full h-full min-h-[460px] lg:min-h-[580px] cursor-grab active:cursor-grabbing"
+        style={{ touchAction: 'none' }}
+      >
+        {!webGlAvailable && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 space-y-2">
+            <Globe className="w-8 h-8 text-[#6E8096]" />
+            <p className="text-xs text-[#AAB8C8]">WebGL Acceleration Unavailable</p>
+          </div>
+        )}
+
+        {/* Quiet Elevated Glass Hover Tooltip */}
+        {hoveredHotspot && (
+          <div className="absolute top-4 sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-30 px-3 py-1.5 rounded-[10px] bg-[rgba(22,34,49,0.85)] backdrop-blur-[18px] backdrop-saturate-[135%] border border-[rgba(148,170,195,0.16)] text-xs text-[#F3F5F7] shadow-[0_8px_24px_rgba(0,0,0,0.4)] flex items-center gap-2 whitespace-nowrap">
+            <span className="font-semibold text-[#F3F5F7]">{hoveredHotspot.name}</span>
+            <span className="text-[#6E8096]">·</span>
+            <span className="text-[#AAB8C8]">{hoveredHotspot.country}</span>
+          </div>
+        )}
+
+        {/* Selected Location Card in Elevated Glass - Perfectly Positioned, Never Clips */}
+        {activeHotspot && (
+          <div className="absolute bottom-16 sm:bottom-6 left-3 sm:left-6 right-3 sm:right-auto sm:max-w-[290px] p-4 rounded-xl bg-[rgba(22,34,49,0.82)] backdrop-blur-[18px] backdrop-saturate-[135%] border border-[rgba(148,170,195,0.16)] shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_12px_32px_rgba(0,0,0,0.45)] text-left space-y-2.5 z-20 transition-all duration-[220ms] ease-[cubic-bezier(0.2,0,0,1)]">
+            <div className="flex items-center justify-between border-b border-[rgba(148,170,195,0.14)] pb-2">
+              <span className="text-xs font-semibold text-[#F3F5F7] tracking-tight">{activeHotspot.name}</span>
+              <button
+                onClick={() => {
+                  setActiveHotspot(null);
+                  resetView();
+                }}
+                className="text-[#AAB8C8] hover:text-[#F3F5F7] p-0.5 cursor-pointer transition-colors duration-[160ms]"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="text-xs text-[#AAB8C8] flex items-center justify-between">
+              <span>{activeHotspot.country}</span>
+              <span className="font-mono text-[#39B8C8] font-medium tabular-nums">{activeHotspot.estimatedInundationHa.toLocaleString()} ha</span>
+            </div>
+            <p className="text-[11px] text-[#AAB8C8] leading-relaxed">{activeHotspot.event}</p>
+          </div>
+        )}
       </div>
 
-      {/* Continent Quick Filter Bar */}
-      <div className="absolute top-12 left-3 flex items-center gap-1 flex-wrap pointer-events-auto z-10">
-        {['All', 'Africa', 'Asia', 'Europe', 'North America', 'South America'].map((cont) => (
-          <button
-            key={cont}
-            onClick={() => setSelectedContinent(cont)}
-            className={`px-2 py-0.5 text-[10px] font-mono rounded transition-colors cursor-pointer ${
-              selectedContinent === cont
-                ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/50'
-                : 'bg-slate-950/80 text-slate-400 hover:text-white border border-slate-800'
-            }`}
-          >
-            {cont}
-          </button>
-        ))}
+      {/* Understated Zoom & Reset Controls */}
+      <div className="absolute bottom-3 right-3 sm:bottom-6 sm:right-6 flex items-center gap-1 z-20 bg-[rgba(16,25,37,0.78)] backdrop-blur-[18px] backdrop-saturate-[135%] border border-[rgba(148,170,195,0.16)] shadow-[0_4px_16px_rgba(0,0,0,0.3)] rounded-[10px] p-1 text-[#AAB8C8]">
+        <button
+          onClick={zoomIn}
+          title="Zoom in"
+          className="p-1.5 hover:text-[#F3F5F7] hover:bg-[rgba(22,34,49,0.85)] rounded-[8px] transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)] cursor-pointer"
+        >
+          <ZoomIn className="w-4 h-4" />
+        </button>
+        <button
+          onClick={zoomOut}
+          title="Zoom out"
+          className="p-1.5 hover:text-[#F3F5F7] hover:bg-[rgba(22,34,49,0.85)] rounded-[8px] transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)] cursor-pointer"
+        >
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <div className="w-px h-3.5 bg-[rgba(148,170,195,0.16)] my-auto mx-0.5" />
+        <button
+          onClick={resetView}
+          title="Reset globe view"
+          className="p-1.5 hover:text-[#F3F5F7] hover:bg-[rgba(22,34,49,0.85)] rounded-[8px] transition-all duration-[160ms] ease-[cubic-bezier(0.2,0,0,1)] cursor-pointer"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Bottom Global Hotspot Quick Focus List */}
-      <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between pointer-events-auto">
-        <div className="flex items-center gap-1.5 flex-wrap max-w-lg">
-          {filteredDisasters.slice(0, 4).map((spot) => (
-            <button
-              key={spot.id}
-              onClick={() => handleSelectSpot(spot)}
-              className="px-2.5 py-1 text-[10px] font-mono font-medium rounded bg-slate-900/90 hover:bg-cyan-950 text-slate-300 hover:text-cyan-300 border border-slate-700/80 transition-colors flex items-center gap-1 cursor-pointer"
-            >
-              <MapPin className="w-2.5 h-2.5 text-cyan-400" />
-              <span>{spot.country}: {spot.name.split(' ')[0]}</span>
-            </button>
-          ))}
-        </div>
-        <span className="text-[10px] font-mono text-slate-400 hidden sm:block bg-slate-950/80 px-2 py-1 rounded border border-slate-800">
-          GLOBAL 3D ROTATION · 60 FPS
-        </span>
-      </div>
-
-      {/* Selected Hotspot Detailed Modal Tooltip */}
-      {activeHotspot && (
-        <div className="absolute top-20 right-3 max-w-[260px] p-3.5 rounded-xl bg-slate-950/95 border border-cyan-500/40 text-left space-y-2 shadow-2xl backdrop-blur-md z-20 pointer-events-auto">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <span className="text-xs font-mono font-bold text-white">{activeHotspot.name}</span>
-            <button
-              onClick={() => setActiveHotspot(null)}
-              className="text-slate-400 hover:text-white text-xs font-mono cursor-pointer"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="text-[11px] text-cyan-300 font-mono flex items-center justify-between">
-            <span>{activeHotspot.country} ({activeHotspot.continent})</span>
-            <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-              activeHotspot.severity === 'Catastrophic' ? 'bg-rose-950 text-rose-300' : 'bg-cyan-950 text-cyan-300'
-            }`}>
-              {activeHotspot.severity}
-            </span>
-          </div>
-          <p className="text-[10px] text-slate-400 leading-tight">{activeHotspot.event}</p>
-          <div className="pt-1 text-[10px] font-mono text-slate-300 space-y-0.5 border-t border-slate-800/80">
-            <div>Coords: <strong className="text-white">{activeHotspot.lat.toFixed(2)}°, {activeHotspot.lon.toFixed(2)}°</strong></div>
-            <div>Inundation: <strong className="text-cyan-400">{activeHotspot.estimatedInundationHa.toLocaleString()} ha</strong></div>
-            <div>Pop. at Risk: <strong className="text-amber-300">{activeHotspot.populationAtRisk.toLocaleString()}</strong></div>
-            <div className="text-emerald-400 font-semibold">{activeHotspot.verifiedChips} Benchmark Chips ({activeHotspot.sensor})</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

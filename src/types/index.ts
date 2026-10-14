@@ -54,11 +54,57 @@ export interface VerificationResponse {
   timestamp: string;
 }
 
+export interface SpatialFloodZone {
+  zone_id: number;
+  pixel_count: number;
+  area_ha: number | null;
+  fraction_of_total_flood: number;
+  pixel_bounds: [number, number, number, number]; // [min_row, min_col, max_row, max_col]
+  geographic_bounds?: { south: number; west: number; north: number; east: number } | null;
+  centroid_latlng?: [number, number] | null;
+  mean_probability: number;
+  category: 'MAJOR_INUNDATION_BODY' | 'SECONDARY_FLOOD_BASIN' | 'LOCALIZED_PONDING';
+}
+
+export interface ProbabilityDistributionStats {
+  p_min: number;
+  p_max: number;
+  p_mean: number;
+  p_std: number;
+  uncertainty_bands: {
+    non_flood_certain: number; // p < 0.35
+    transition_uncertain: number; // 0.35 <= p < 0.65
+    moderate_certainty: number; // 0.65 <= p < 0.85
+    core_certainty: number; // p >= 0.85
+  };
+}
+
 export interface FloodAnalysisResult {
   status: 'SUCCESS' | 'REJECTED' | 'FAILED';
   analysis_id: string;
   verification_id: string;
+  file_hash_sha256?: string;
+  checkpoint_hash?: string;
   filename: string;
+  crs_type?: string;
+  epsg_code?: number | null;
+  epsg_urn?: string | null;
+  crs_name?: string | null;
+  origin_lat?: number | null;
+  origin_lon?: number | null;
+  native_origin_x?: number | null;
+  native_origin_y?: number | null;
+  pixel_scale?: number[] | null;
+  affine_transform?: number[] | null;
+  is_rotated?: boolean;
+  rotation_angle_deg?: number | null;
+  geographic_bounds?: { south: number; west: number; north: number; east: number } | null;
+  corner_coordinates_latlng?: [number, number][] | null;
+  nodata_value?: number | string | null;
+  nodata_pixel_count?: number;
+  angular_resolution_deg?: number[] | null;
+  approx_ground_resolution_m?: number[] | null;
+  projected_resolution_m?: number[] | null;
   flood_detected: boolean;
   flood_pixel_count: number;
   valid_pixel_count?: number;
@@ -66,7 +112,9 @@ export interface FloodAnalysisResult {
   flooded_pixel_fraction?: number;
   coverage_percent: number;
   confidence_mean: number;
+  probability_stats?: ProbabilityDistributionStats;
   connected_regions: number;
+  spatial_zones?: SpatialFloodZone[];
   physical_area_ha: number | null;
   physical_area_notes: string;
   area_calculation_method?: string;
@@ -75,7 +123,71 @@ export interface FloodAnalysisResult {
   inference_latency_ms: number;
   threshold_used: number;
   overlay_data_url?: string;
+  mask_png_data_url?: string;
+  confidence_heatmap_data_url?: string;
   created_at: string;
+}
+
+export interface RainViewerRadarFrame {
+  time: number;
+  path: string;
+}
+
+export interface RainViewerMetadata {
+  version: string;
+  generated: number;
+  host: string;
+  radar: {
+    past: RainViewerRadarFrame[];
+    nowcast: RainViewerRadarFrame[];
+  };
+}
+
+export interface OpenMeteoCurrentWeather {
+  time: string;
+  temperature_2m: number;
+  relative_humidity_2m: number;
+  apparent_temperature: number;
+  is_day: number;
+  precipitation: number;
+  rain: number;
+  showers: number;
+  weather_code: number;
+  cloud_cover: number;
+  wind_speed_10m: number;
+  wind_direction_10m: number;
+  surface_pressure?: number;
+  wind_gusts_10m?: number;
+}
+
+export interface OpenMeteoHourlyForecast {
+  time: string[];
+  precipitation: number[];
+  rain: number[];
+  showers: number[];
+  weather_code: number[];
+  wind_speed_10m: number[];
+}
+
+export interface LiveWeatherData {
+  source: string;
+  coordinates: { lat: number; lon: number };
+  rainViewer?: {
+    host: string;
+    frames: RainViewerRadarFrame[];
+    nowcastFrames: RainViewerRadarFrame[];
+    selectedFrameIndex: number;
+    generatedTime: string;
+  };
+  currentWeather?: OpenMeteoCurrentWeather;
+  currentUnits?: Record<string, string>;
+  forecast?: OpenMeteoHourlyForecast;
+  forecastUnits?: Record<string, string>;
+  retrieval_timestamp: string | null;
+  last_successful_refresh: string | null;
+  last_attempted_refresh: string | null;
+  status: 'FRESH' | 'STALE DATA' | 'SOURCE UNAVAILABLE';
+  error_message?: string;
 }
 
 export interface HydrologyObservation {
@@ -164,15 +276,48 @@ export interface ModelEvaluationMetrics {
 
 export interface AnalysisSummary {
   id: string;
+  analysis_id?: string;
+  verification_id?: string;
+  file_hash_sha256?: string;
+  checkpoint_hash?: string;
   timestamp: string;
   filename: string;
+  crs_type?: string;
+  crs_name?: string | null;
+  origin_lat?: number | null;
+  origin_lon?: number | null;
+  pixel_scale?: number[] | null;
+  angular_resolution_deg?: number[] | null;
+  approx_ground_resolution_m?: number[] | null;
+  projected_resolution_m?: number[] | null;
   status: string;
+  flood_detected?: boolean;
+  connected_regions?: number;
   floodedAreaHa: string;
+  physical_area_ha?: number | null;
+  coverage_percent?: number;
+  flood_pixel_count?: number;
+  valid_pixel_count?: number;
+  total_pixels?: number;
+  confidence_mean?: number;
+  threshold_used?: number;
+  area_calculation_method?: string;
+  spatial_resolution_m?: number[] | null;
+  geospatial_validity?: boolean;
+  geographic_bounds?: { north: number; south: number; east: number; west: number } | null;
+  mask_png_data_url?: string;
+  overlay_data_url?: string;
+  confidence_heatmap_data_url?: string;
+  spatial_zones?: Array<any>;
+  corner_coordinates_latlng?: [number, number][] | null;
+  inference_latency_ms?: number;
+  physical_area_notes?: string;
   affectedRoads: string;
   affectedBridges: string;
   isolatedZones: string;
   priorityScore: string;
   isDemoSample?: boolean;
+  created_at?: string;
 }
 
 export interface MapLayerState {
