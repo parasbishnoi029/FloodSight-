@@ -8,7 +8,9 @@ import {
   Radar,
   Mountain,
   Globe,
-  AlertCircle
+  AlertCircle,
+  Sparkles,
+  Info
 } from 'lucide-react';
 import { NavigationTab, HealthStatus, ModelEvaluationMetrics } from '../types';
 import { getModelEvaluationMetrics, checkBackendHealth } from '../services/api';
@@ -197,6 +199,58 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
           <div className="w-9 h-9 rounded-[9px] bg-[rgba(22,34,49,0.85)] border border-[rgba(148,170,195,0.18)] flex items-center justify-center text-[#69B99A]">
             <Globe className="w-5 h-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Hackathon Winning Edge & Expert Architecture Pillars */}
+      <div className="p-5 rounded-xl bg-[rgba(16,25,37,0.85)] border border-[rgba(57,184,200,0.3)] shadow-[0_8px_24px_rgba(0,0,0,0.3)] space-y-4">
+        <div className="flex items-center justify-between border-b border-[rgba(148,170,195,0.16)] pb-3">
+          <div className="flex items-center gap-2.5">
+            <Sparkles className="w-5 h-5 text-[#39B8C8]" />
+            <h2 className="text-sm font-semibold text-[#F3F5F7] uppercase tracking-wider font-mono">
+              Hackathon Winning Edge & Expert Architecture Pillars
+            </h2>
+          </div>
+          <span className="text-[11px] font-mono text-[#39B8C8] bg-[rgba(57,184,200,0.12)] px-2.5 py-1 rounded-[6px] border border-[rgba(57,184,200,0.25)]">
+            Earth Observation Track B
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+          <div className="p-3.5 rounded-lg bg-[rgba(22,34,49,0.7)] border border-[rgba(148,170,195,0.12)] space-y-1.5">
+            <span className="text-[#39B8C8] font-bold font-mono block">1. The "Confidence vs. Cloud" Narrative (Explainable AI)</span>
+            <p className="text-[#AAB8C8] leading-relaxed">
+              Computes pixel-level probability distributions and transition uncertainty zones to warn responders where satellite clouds or dense vegetation create classification ambiguity.
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-lg bg-[rgba(22,34,49,0.7)] border border-[rgba(148,170,195,0.12)] space-y-1.5">
+            <span className="text-[#39B8C8] font-bold font-mono block">2. Live "What-If" Water Stage & Surge Simulation</span>
+            <p className="text-[#AAB8C8] leading-relaxed">
+              Demonstrate upstream dam releases or storm surges using the 3D Extruded Topography water stage slider (+0.0m to +2.0m) recalculating inundation across Copernicus GLO-90 DEM terrain.
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-lg bg-[rgba(22,34,49,0.7)] border border-[rgba(148,170,195,0.12)] space-y-1.5">
+            <span className="text-[#39B8C8] font-bold font-mono block">3. The "Last Mile" Actionability (SITREP & Evacuation)</span>
+            <p className="text-[#AAB8C8] leading-relaxed">
+              Field commanders export formal ICS-209 situation briefs and GeoJSON routing packages within seconds of satellite downlink for immediate operational deployment.
+            </p>
+          </div>
+
+          <div className="p-3.5 rounded-lg bg-[rgba(22,34,49,0.7)] border border-[rgba(148,170,195,0.12)] space-y-1.5">
+            <span className="text-[#39B8C8] font-bold font-mono block">4. Real-Time Meteorological Grounding</span>
+            <p className="text-[#AAB8C8] leading-relaxed">
+              Correlates satellite flood footprints directly with live Open-Meteo weather telemetry and RainViewer Doppler radar precipitation cells in real time.
+            </p>
+          </div>
+        </div>
+
+        <div className="p-3 rounded-lg bg-[rgba(57,184,200,0.08)] border border-[rgba(57,184,200,0.25)] text-xs font-mono text-[#39B8C8] flex items-start gap-2">
+          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+          <div>
+            <strong className="text-white">Official Pitch Hook:</strong> &ldquo;Most flood mapping tools give you flat, unverified pictures hours after disaster strikes. FloodSight AI combines Copernicus GLO-90 DEM topography, U-Net probability segmentation, and real-time hydrological telemetry into an interactive 3D command center—giving first responders actionable intelligence in seconds, not days.&rdquo;
           </div>
         </div>
       </div>

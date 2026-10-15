@@ -172,11 +172,42 @@ export async function getLiveHydrology(lat: number, lon: number): Promise<Hydrol
   return fetchPromise;
 }
 
+export interface CopernicusStatusResponse {
+  configured: boolean;
+  provider: string;
+  stac_catalog_url: string;
+  sentinel_hub_process_url: string;
+  supported_collections: string[];
+  documentation: string;
+  status: 'AUTHENTICATED' | 'CREDENTIALS_REQUIRED';
+  message: string;
+}
+
 /**
- * Queries Copernicus Data Space Ecosystem (CDSE) STAC API for actual Sentinel-2 acquisitions.
+ * Checks Copernicus Data Space Ecosystem credential status and API readiness.
  */
-export async function getLiveSatelliteCatalog(lat: number, lon: number): Promise<SatelliteCatalogProduct> {
-  const cacheKey = `stac_${lat.toFixed(2)}_${lon.toFixed(2)}`;
+export async function getCopernicusStatus(): Promise<CopernicusStatusResponse | null> {
+  try {
+    const res = await fetch('/api/external/copernicus/status', {
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      return (await res.json()) as CopernicusStatusResponse;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Queries Copernicus Data Space Ecosystem (CDSE) STAC API for actual Sentinel-2 or Sentinel-1 acquisitions.
+ */
+export async function getLiveSatelliteCatalog(
+  lat: number,
+  lon: number,
+  collection: 'sentinel-2-l2a' | 'sentinel-1-grd' = 'sentinel-2-l2a'
+): Promise<SatelliteCatalogProduct> {
+  const cacheKey = `stac_${collection}_${lat.toFixed(2)}_${lon.toFixed(2)}`;
   const now = Date.now();
 
   if (memoryCache.has(cacheKey)) {
@@ -198,7 +229,7 @@ export async function getLiveSatelliteCatalog(lat: number, lon: number): Promise
     const attemptTime = getUtcIso();
     // 1. Try backend proxy
     try {
-      const backendRes = await fetch(`/api/external/satellite-catalog?lat=${lat}&lon=${lon}`, {
+      const backendRes = await fetch(`/api/external/satellite-catalog?lat=${lat}&lon=${lon}&collection=${collection}`, {
         headers: { 'Accept': 'application/json' },
         signal: AbortSignal.timeout(8000)
       });
@@ -210,26 +241,40 @@ export async function getLiveSatelliteCatalog(lat: number, lon: number): Promise
       }
     } catch {}
 
-    // 2. Direct client query to CDSE STAC
+    // 2. Direct client query to Microsoft Planetary Computer STAC (Public, No Account Required)
     try {
-      const bboxStr = `${(lon - 0.2).toFixed(3)},${(lat - 0.2).toFixed(3)},${(lon + 0.2).toFixed(3)},${(lat + 0.2).toFixed(3)}`;
-      const stacUrl = `https://catalogue.dataspace.copernicus.eu/stac/search?collections=sentinel-2-l2a&bbox=${bboxStr}&limit=1`;
-      const res = await fetch(stacUrl, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) throw new Error(`CDSE STAC returned HTTP ${res.status}`);
+      const west = parseFloat((lon - 0.25).toFixed(3));
+      const south = parseFloat((lat - 0.25).toFixed(3));
+      const east = parseFloat((lon + 0.25).toFixed(3));
+      const north = parseFloat((lat + 0.25).toFixed(3));
+
+      const res = await fetch('https://planetarycomputer.microsoft.com/api/stac/v1/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          collections: ['sentinel-2-l2a'],
+          bbox: [west, south, east, north],
+          limit: 1,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!res.ok) throw new Error(`Planetary Computer STAC returned HTTP ${res.status}`);
       const stacJson = await res.json();
       const features = stacJson.features || [];
       const retrievalTime = getUtcIso();
 
       if (features.length === 0) {
         const emptyResult: SatelliteCatalogProduct = {
-          source: 'Copernicus Data Space Ecosystem (CDSE) STAC API',
+          source: 'Microsoft Planetary Computer STAC API',
           collection: 'sentinel-2-l2a',
           found: false,
           retrieval_timestamp: retrievalTime,
           last_successful_refresh: retrievalTime,
           last_attempted_refresh: attemptTime,
           status: 'FRESH',
-          cache_age_seconds: 0
+          cache_age_seconds: 0,
+          attribution: 'European Space Agency (ESA) Copernicus Sentinel-2 / Microsoft Planetary Computer',
         };
         memoryCache.set(cacheKey, { data: emptyResult, retrievedAt: Date.now() });
         return emptyResult;
@@ -237,26 +282,36 @@ export async function getLiveSatelliteCatalog(lat: number, lon: number): Promise
 
       const feat = features[0];
       const props = feat.properties || {};
+      const assets = feat.assets || {};
       const result: SatelliteCatalogProduct = {
-        source: 'Copernicus Data Space Ecosystem (CDSE) STAC API',
+        source: 'Microsoft Planetary Computer STAC API',
         collection: 'sentinel-2-l2a',
         found: true,
         product_id: feat.id,
         platform: props.platform || 'Sentinel-2',
         instrument: props.instruments?.[0] || 'MSI',
-        processing_level: props['processing:level'] || 'L2A',
-        acquisition_timestamp: props.datetime || props.start_datetime,
-        published_timestamp: props.published,
+        processing_level: 'L2A',
+        acquisition_timestamp: props.datetime,
+        published_timestamp: props.published || props.datetime,
         cloud_cover_percent: props['eo:cloud_cover'] != null ? Number(props['eo:cloud_cover'].toFixed(1)) : null,
-        spatial_resolution_m: props.gsd || 10.0,
+        spatial_resolution_m: 10.0,
         orbit_state: props['sat:orbit_state'],
         footprint_geometry: feat.geometry,
+        preview_url: assets.rendered_preview?.href || null,
+        assets: {
+          B02: assets.B02 ? { href: assets.B02.href, title: assets.B02.title } : null,
+          B03: assets.B03 ? { href: assets.B03.href, title: assets.B03.title } : null,
+          B04: assets.B04 ? { href: assets.B04.href, title: assets.B04.title } : null,
+          visual: assets.visual ? { href: assets.visual.href, title: assets.visual.title } : null,
+        },
+        has_model_bands: Boolean(assets.B02 && assets.B03 && assets.B04),
         retrieval_timestamp: retrievalTime,
         last_successful_refresh: retrievalTime,
         last_attempted_refresh: attemptTime,
         status: 'FRESH',
         cache_age_seconds: 0,
-        provenance_verified: true
+        provenance_verified: true,
+        attribution: 'European Space Agency (ESA) Copernicus Sentinel-2 / Microsoft Planetary Computer',
       };
 
       memoryCache.set(cacheKey, { data: result, retrievedAt: Date.now() });

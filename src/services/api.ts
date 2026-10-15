@@ -146,3 +146,54 @@ export async function getModelEvaluationMetrics(): Promise<ModelEvaluationMetric
   }
 }
 
+/**
+ * Searches Microsoft Planetary Computer STAC for Sentinel-2 L2A acquisitions.
+ * Free and requires zero user account or registration.
+ */
+export async function searchPlanetaryComputerStac(params: {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+  datetime?: string;
+  maxCloud?: number;
+  limit?: number;
+}): Promise<any> {
+  const query = new URLSearchParams({
+    bbox: `${params.west},${params.south},${params.east},${params.north}`,
+    limit: String(params.limit || 5),
+    max_cloud_cover: String(params.maxCloud || 50),
+  });
+  if (params.datetime) {
+    query.set('datetime', params.datetime);
+  }
+
+  const response = await fetch(`${API_BASE}/external/stac/search?${query.toString()}`, {
+    headers: { 'Accept': 'application/json' },
+  });
+  return await parseSafeJsonResponse<any>(response, `${API_BASE}/external/stac/search`);
+}
+
+/**
+ * Obtains a public SAS token for Microsoft Planetary Computer Sentinel-2 L2A assets.
+ */
+export async function getPlanetaryComputerToken(): Promise<any> {
+  const response = await fetch(`${API_BASE}/external/stac/token`, {
+    headers: { 'Accept': 'application/json' },
+  });
+  return await parseSafeJsonResponse<any>(response, `${API_BASE}/external/stac/token`);
+}
+
+/**
+ * Validates a Planetary Computer STAC item for band identity, CRS, dimensions, and model contract.
+ */
+export async function validateStacItem(item: any): Promise<any> {
+  const response = await fetch(`${API_BASE}/external/stac/validate-item`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(item),
+  });
+  return await parseSafeJsonResponse<any>(response, `${API_BASE}/external/stac/validate-item`);
+}
+
+

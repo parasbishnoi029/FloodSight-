@@ -1,35 +1,81 @@
 import React, { useRef, useMemo, useState, useEffect } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
-import { 
-  Waves, 
-  Layers, 
-  Mountain, 
-  MapPin, 
-  AlertTriangle,
-  Crosshair,
-  ShieldCheck,
+import {
+  Waves,
+  Layers,
+  Mountain,
+  MapPin,
   Eye,
   RotateCcw,
-  SlidersHorizontal,
   Compass,
   Lock,
   Info,
   CheckCircle2,
   AlertCircle,
-  CloudRain,
-  Wind,
-  Radio
+  Radio,
+  Grid
 } from 'lucide-react';
 import { FloodAnalysisResult, AnalysisSummary } from '../../types';
 import { GLOBAL_DISASTERS, GlobalDisasterLocation } from '../../data/globalDisasters';
 import { getRainViewerMetadata, getRainViewerTileUrl } from '../../services/weatherService';
+import { MapLayerConfig } from '../map/LayerControl';
+
+export type SceneMode = 'catalog-reference' | 'uploaded-imagery' | 'validated-analysis';
+
+export interface InfrastructurePin {
+  id: string;
+  name: string;
+  type: string;
+  position: [number, number, number];
+  elevationMsl: number | null;
+  isSubmerged: boolean;
+  areaHa?: number;
+  probability?: number;
+}
+
+export interface DepthProbeData {
+  worldX: number;
+  worldZ: number;
+  lat: number | null;
+  lon: number | null;
+  groundElevationMeters: number | null;
+  waterSurfaceMeters: number | null;
+  submergedDepthMeters: number | null;
+  isSubmerged: boolean;
+  classification: string;
+}
+
+/**
+ * Creates a clean neutral terrain texture without artificial cyan grids, text, or concentric circles.
+ */
+export function createProceduralTerrainTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const grad = ctx.createLinearGradient(0, 0, 512, 512);
+    grad.addColorStop(0, '#111827');
+    grad.addColorStop(0.35, '#1e293b');
+    grad.addColorStop(0.7, '#14332b');
+    grad.addColorStop(1, '#0f291e');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 512, 512);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.flipY = true;
+  return tex;
+}
 
 /**
  * Computes high-resolution Slippy tile URL from Esri World Imagery for exact coordinates
  */
-export function getEsriSatelliteTileUrl(lat: number, lon: number, zoom = 13): string {
+export function getEsriSatelliteTileUrl(lat: number, lon: number, zoom = 11): string {
   const n = Math.pow(2, zoom);
   const x = Math.floor(((lon + 180) / 360) * n);
   const latRad = (lat * Math.PI) / 180;
@@ -42,70 +88,32 @@ export interface ExtrudedFloodTerrainProps {
   selectedLocation?: string;
   terrainType?: 'delta' | 'canyon' | 'alluvial' | 'coastal';
   floodCoveragePercent?: number;
-  initialWaterLevel?: number; // 0 to 1
-  extrusionScale?: number; // 1 to 5
+  initialWaterLevel?: number;
+  extrusionScale?: number;
   analysisResult?: FloodAnalysisResult | AnalysisSummary | null;
   hasMeasuredDem?: boolean;
   measuredElevationMeters?: number | null;
   rasterPreviewUrl?: string | null;
+  layerConfig?: MapLayerConfig;
   coordinates?: { lat: number; lon: number } | null;
   onClearAnalysis?: () => void;
 }
 
-interface InfrastructurePin {
-  id: string;
-  name: string;
-  type: string;
-  position: [number, number, number];
-  elevationMsl: number | null;
-  isSubmerged: boolean;
-  areaHa?: number | null;
-  probability?: number;
-}
-
-interface DepthProbeData {
-  worldX: number;
-  worldZ: number;
-  lat: number | null;
-  lon: number | null;
-  groundElevationMeters: number | null;
-  waterSurfaceMeters: number | null;
-  submergedDepthMeters: number | null;
-  isSubmerged: boolean;
-  classification: string;
-}
-
-// 3D Topographic Terrain & Extruded Flood Mask Mesh
-function ScientificTerrainMesh({
-  sizeX,
-  sizeZ,
-  shadingMode,
-  showContours,
-  showFloodMask,
-  showRadarOverlay = false,
-  hasMeasuredDem = false,
-  demElevations = null,
-  demMinM = null,
-  demMaxM = null,
-  extrusionScale = 2.0,
-  analysisResult = null,
-  loadedTextures,
-  effectiveBounds,
-  onHoverPin,
-  onProbeDepth,
-}: {
+interface ScientificTerrainMeshProps {
   sizeX: number;
   sizeZ: number;
   shadingMode: 'hypsometric' | 'depth' | 'satellite' | 'sar' | 'probability' | 'radar';
   showContours: boolean;
   showFloodMask: boolean;
-  showRadarOverlay?: boolean;
-  hasMeasuredDem?: boolean;
-  demElevations?: number[] | null;
-  demMinM?: number | null;
-  demMaxM?: number | null;
-  extrusionScale?: number;
-  analysisResult?: FloodAnalysisResult | AnalysisSummary | null;
+  showRadarOverlay: boolean;
+  showGrid: boolean;
+  sceneMode: SceneMode;
+  hasMeasuredDem: boolean;
+  demElevations: number[] | null;
+  demMinM: number | null;
+  demMaxM: number | null;
+  extrusionScale: number;
+  analysisResult: FloodAnalysisResult | AnalysisSummary | null;
   loadedTextures: {
     optical: THREE.Texture | null;
     mask: THREE.Texture | null;
@@ -113,28 +121,58 @@ function ScientificTerrainMesh({
     hypsometric: THREE.Texture | null;
     radar: THREE.Texture | null;
   };
-  effectiveBounds?: { south: number; west: number; north: number; east: number } | null;
+  effectiveBounds: { south: number; west: number; north: number; east: number };
+  waterStageOffset: number;
   onHoverPin: (pin: InfrastructurePin | null) => void;
   onProbeDepth: (probe: DepthProbeData | null) => void;
-}) {
+}
+
+function ScientificTerrainMesh({
+  sizeX,
+  sizeZ,
+  shadingMode,
+  showContours,
+  showFloodMask,
+  showRadarOverlay,
+  showGrid,
+  sceneMode,
+  hasMeasuredDem,
+  demElevations,
+  demMinM,
+  demMaxM,
+  extrusionScale,
+  analysisResult,
+  loadedTextures,
+  effectiveBounds,
+  waterStageOffset,
+  onHoverPin,
+  onProbeDepth,
+}: ScientificTerrainMeshProps) {
   const meshRef = useRef<THREE.Mesh>(null);
+  const waterMeshRef = useRef<THREE.Mesh>(null);
   const gridRes = 64;
 
-  const isVerified = Boolean(
-    analysisResult &&
-    (analysisResult.status === 'SUCCESS' ||
-      analysisResult.status === 'Completed' ||
-      Boolean((analysisResult as any).analysis_id || (analysisResult as any).id))
-  );
+  useFrame((state) => {
+    if (!waterMeshRef.current) return;
+    const t = state.clock.elapsedTime;
+    const pos = waterMeshRef.current.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const wave = Math.sin(t * 3.0 + x * 4.0 + z * 4.0) * 0.0025;
+      pos.setY(i, (pos.getY(i) || 0) + wave * 0.015);
+    }
+    pos.needsUpdate = true;
+  });
 
-  // Generate realistic DEM elevation when genuine DEM exists, or flat reference plane
+  const isVerified = sceneMode === 'validated-analysis';
+
   const { terrainGeometry, waterGeometry, contourGeometry, pins, elevationMatrix } = useMemo(() => {
     const geo = new THREE.PlaneGeometry(sizeX, sizeZ, gridRes, gridRes);
     geo.rotateX(-Math.PI / 2);
-
     const pos = geo.attributes.position;
-    const elevMatrix: (number | null)[][] = [];
 
+    const elevMatrix: (number | null)[][] = [];
     for (let r = 0; r <= gridRes; r++) {
       elevMatrix.push([]);
     }
@@ -142,7 +180,7 @@ function ScientificTerrainMesh({
     const hasRealElev = Boolean(
       hasMeasuredDem && demElevations && demElevations.length > 0 && demMinM !== null && demMaxM !== null
     );
-    const elevSpan = hasRealElev ? Math.max(1, (demMaxM! - demMinM!)) : 100;
+    const elevSpan = hasRealElev ? Math.max(1, demMaxM! - demMinM!) : 100;
     const demDim = hasRealElev ? Math.round(Math.sqrt(demElevations!.length)) : 1;
 
     for (let i = 0; i < pos.count; i++) {
@@ -153,13 +191,18 @@ function ScientificTerrainMesh({
       let elevMsl: number | null = null;
 
       if (hasRealElev && demElevations) {
-        // Bilinear interpolation across real-time Copernicus GLO-90 DEM grid
-        const demR = (row / gridRes) * (demDim - 1);
+        // True North-Up DEM Alignment:
+        // row 0 in PlaneGeometry corresponds to -sizeZ/2 (North).
+        // The Open-Meteo elevation grid has row 0 at South and row (demDim-1) at North.
+        // Therefore, row 0 (North) must map to (demDim - 1).
+        const demR = ((gridRes - row) / gridRes) * (demDim - 1);
         const demC = (col / gridRes) * (demDim - 1);
+
         const r0 = Math.floor(demR);
         const r1 = Math.min(demDim - 1, r0 + 1);
         const c0 = Math.floor(demC);
         const c1 = Math.min(demDim - 1, c0 + 1);
+
         const rf = demR - r0;
         const cf = demC - c0;
 
@@ -170,11 +213,11 @@ function ScientificTerrainMesh({
 
         const elev = (1 - rf) * ((1 - cf) * e00 + cf * e01) + rf * ((1 - cf) * e10 + cf * e11);
         const norm = Math.max(0, Math.min(1, (elev - demMinM!) / elevSpan));
-        // Vertical displacement scaled by genuine DEM elevation
+
         rawHeight = norm * (Math.min(3.5, Math.max(0.5, extrusionScale)) * 0.35);
         elevMsl = Math.round(elev * 10) / 10;
       } else {
-        // Truthful Optical-Only: Flat reference plane (ZERO fabricated elevation)
+        // Zero-Fabrication Fallback: Flat reference plane
         rawHeight = 0;
         elevMsl = null;
       }
@@ -185,17 +228,16 @@ function ScientificTerrainMesh({
 
     geo.computeVertexNormals();
 
-    // 2. Flood Inundation Surface Mesh (Exact match to raster footprint)
+    // Flood Inundation Surface Mesh (Exact match to raster footprint)
     const waterGeo = new THREE.PlaneGeometry(sizeX, sizeZ, gridRes, gridRes);
     waterGeo.rotateX(-Math.PI / 2);
     const wPos = waterGeo.attributes.position;
     for (let i = 0; i < wPos.count; i++) {
-      // Flood surface sits immediately atop terrain
-      wPos.setY(i, pos.getY(i) + (hasRealElev ? 0.012 : 0.005));
+      wPos.setY(i, pos.getY(i) + (hasRealElev ? 0.012 : 0.005) + waterStageOffset * 0.05);
     }
     waterGeo.computeVertexNormals();
 
-    // 3. Iso-Elevation Contour Lines (Only generated when true DEM elevation is available)
+    // Iso-Elevation Contour Lines (Only generated when true DEM elevation is available)
     const contourPoints: THREE.Vector3[] = [];
     if (showContours && hasRealElev && demMinM !== null && demMaxM !== null) {
       const step = Math.max(5, Math.round(elevSpan / 8));
@@ -219,18 +261,18 @@ function ScientificTerrainMesh({
             if ((e0 <= level && e1 > level) || (e0 > level && e1 <= level)) {
               const frac = Math.abs(e0 - e1) > 0.001 ? (level - e0) / (e1 - e0) : 0.5;
               const cx = pos.getX(i0) + frac * (pos.getX(i1) - pos.getX(i0));
-              const cy = pos.getY(i0) + frac * (pos.getY(i1) - pos.getY(i0)) + 0.008;
+              const cy = pos.getY(i0) + frac * (pos.getY(i1) - pos.getY(i0)) + 0.006;
               const cz = pos.getZ(i0) + frac * (pos.getZ(i1) - pos.getZ(i0));
-              contourPoints.push(new THREE.Vector3(cx - 0.02, cy, cz));
-              contourPoints.push(new THREE.Vector3(cx + 0.02, cy, cz));
+              contourPoints.push(new THREE.Vector3(cx - 0.015, cy, cz));
+              contourPoints.push(new THREE.Vector3(cx + 0.015, cy, cz));
             }
             if ((e0 <= level && e2 > level) || (e0 > level && e2 <= level)) {
               const frac = Math.abs(e0 - e2) > 0.001 ? (level - e0) / (e2 - e0) : 0.5;
               const cx = pos.getX(i0) + frac * (pos.getX(i2) - pos.getX(i0));
-              const cy = pos.getY(i0) + frac * (pos.getY(i2) - pos.getY(i0)) + 0.008;
+              const cy = pos.getY(i0) + frac * (pos.getY(i2) - pos.getY(i0)) + 0.006;
               const cz = pos.getZ(i0) + frac * (pos.getZ(i2) - pos.getZ(i0));
-              contourPoints.push(new THREE.Vector3(cx, cy, cz - 0.02));
-              contourPoints.push(new THREE.Vector3(cx, cy, cz + 0.02));
+              contourPoints.push(new THREE.Vector3(cx, cy, cz - 0.015));
+              contourPoints.push(new THREE.Vector3(cx, cy, cz + 0.015));
             }
           });
         }
@@ -238,7 +280,7 @@ function ScientificTerrainMesh({
     }
     const contourGeo = new THREE.BufferGeometry().setFromPoints(contourPoints);
 
-    // 4. Spatial Flood Cluster Centroids (Only real U-Net detected clusters)
+    // Spatial Flood Cluster Centroids (Only validated U-Net detected clusters)
     const rawPins: InfrastructurePin[] = [];
     if (isVerified && analysisResult?.spatial_zones && analysisResult.spatial_zones.length > 0 && analysisResult.geographic_bounds) {
       const b = analysisResult.geographic_bounds;
@@ -277,16 +319,14 @@ function ScientificTerrainMesh({
       pins: rawPins,
       elevationMatrix: elevMatrix,
     };
-  }, [sizeX, sizeZ, isVerified, hasMeasuredDem, demElevations, demMinM, demMaxM, extrusionScale, showContours, analysisResult]);
+  }, [sizeX, sizeZ, isVerified, hasMeasuredDem, demElevations, demMinM, demMaxM, extrusionScale, showContours, analysisResult, waterStageOffset]);
 
   const handlePointerMove = (e: any) => {
     e.stopPropagation();
     if (!e.point) return;
-
     const wx = e.point.x;
     const wz = e.point.z;
 
-    // Convert raycast point to normalized UV coordinates (0 to 1)
     const u = Math.min(1, Math.max(0, (wx + sizeX / 2) / sizeX));
     const v = Math.min(1, Math.max(0, (wz + sizeZ / 2) / sizeZ));
 
@@ -297,9 +337,6 @@ function ScientificTerrainMesh({
       const b = analysisResult.geographic_bounds;
       lon = b.west + u * (b.east - b.west);
       lat = b.north - v * (b.north - b.south);
-    } else if (analysisResult?.origin_lat != null && analysisResult?.origin_lon != null) {
-      lat = analysisResult.origin_lat;
-      lon = analysisResult.origin_lon;
     } else if (effectiveBounds) {
       lon = effectiveBounds.west + u * (effectiveBounds.east - effectiveBounds.west);
       lat = effectiveBounds.north - v * (effectiveBounds.north - effectiveBounds.south);
@@ -316,12 +353,12 @@ function ScientificTerrainMesh({
         lat: parseFloat(lat.toFixed(5)),
         lon: parseFloat(lon.toFixed(5)),
         groundElevationMeters: groundElev,
-        waterSurfaceMeters: groundElev !== null ? parseFloat((groundElev + 0.2).toFixed(1)) : null,
-        submergedDepthMeters: null, // Depth unavailable without bathymetry
+        waterSurfaceMeters: null,
+        submergedDepthMeters: null,
         isSubmerged: false,
-        classification: hasMeasuredDem 
-          ? 'Authenticated Topography (Copernicus GLO-90 DEM Active)' 
-          : '2D Optical Surface (Elevation Unavailable)',
+        classification: hasMeasuredDem
+          ? `Open-Meteo Point Elevation Samples (~90m GLO-90 DEM, ${demMinM ?? 0}m – ${demMaxM ?? 100}m MSL)`
+          : '2D Optical Surface (DEM Unavailable · Flat Reference Plane)',
       });
     } else {
       onProbeDepth({
@@ -333,12 +370,11 @@ function ScientificTerrainMesh({
         waterSurfaceMeters: null,
         submergedDepthMeters: null,
         isSubmerged: false,
-        classification: 'Reference Plane — Awaiting Satellite Raster Upload',
+        classification: 'Reference Scene · Flat Reference Plane',
       });
     }
   };
 
-  // Determine active surface material based on shadingMode and loaded textures
   const activeTexture = useMemo(() => {
     if (shadingMode === 'hypsometric' && loadedTextures.hypsometric) {
       return loadedTextures.hypsometric;
@@ -354,7 +390,6 @@ function ScientificTerrainMesh({
 
   return (
     <group onPointerMove={handlePointerMove} onPointerLeave={() => onProbeDepth(null)}>
-      
       {/* 1. Base Terrain Mesh with Real Satellite Raster Texture */}
       <mesh ref={meshRef} geometry={terrainGeometry} receiveShadow castShadow>
         {activeTexture ? (
@@ -368,7 +403,7 @@ function ScientificTerrainMesh({
           />
         ) : (
           <meshStandardMaterial
-            color={0x0b1329}
+            color={0x0f172a}
             roughness={0.88}
             metalness={0.06}
           />
@@ -378,18 +413,18 @@ function ScientificTerrainMesh({
       {/* 2. Iso-Elevation Contour Lines (Only shown when genuine DEM elevation exists) */}
       {showContours && hasMeasuredDem && demElevations && demElevations.length > 0 && (
         <lineSegments geometry={contourGeometry}>
-          <lineBasicMaterial color={0x38bdf8} transparent opacity={0.45} linewidth={1} />
+          <lineBasicMaterial color={0x38bdf8} transparent opacity={0.4} linewidth={1} />
         </lineSegments>
       )}
 
       {/* 3. Verified Flood Inundation Mask Overlay (Translucent cyan overlay strictly atop water) */}
       {showFloodMask && isVerified && loadedTextures.mask && (
-        <mesh geometry={waterGeometry}>
+        <mesh ref={waterMeshRef} geometry={waterGeometry}>
           <meshStandardMaterial
             map={loadedTextures.mask}
             color="#ffffff"
             transparent={true}
-            opacity={0.52}
+            opacity={0.55}
             roughness={0.15}
             metalness={0.15}
             alphaTest={0.02}
@@ -398,19 +433,19 @@ function ScientificTerrainMesh({
         </mesh>
       )}
 
-      {/* 4. Real-time RainViewer Live Weather Doppler Radar Overlay */}
+      {/* 4. Live Doppler Radar Overlay */}
       {showRadarOverlay && loadedTextures.radar && (
         <mesh geometry={waterGeometry} position={[0, 0.012, 0]}>
           <meshStandardMaterial
             map={loadedTextures.radar}
             transparent={true}
-            opacity={0.68}
+            opacity={0.65}
             depthWrite={false}
           />
         </mesh>
       )}
 
-      {/* 4. Real Detected Spatial Flood Cluster Centroids */}
+      {/* 5. Detected Spatial Flood Cluster Centroids */}
       {pins.map((pin) => (
         <group
           key={pin.id}
@@ -433,11 +468,13 @@ function ScientificTerrainMesh({
         </group>
       ))}
 
-      {/* 5. Minimalist Geospatial Ground Grid Reference */}
-      <gridHelper
-        args={[Math.max(sizeX, sizeZ) * 1.15, 16, 0x0284c7, 0x1e293b]}
-        position={[0, -0.01, 0]}
-      />
+      {/* 6. Subtle, Clean Geospatial Reference Ground Grid */}
+      {showGrid && (
+        <gridHelper
+          args={[Math.max(sizeX, sizeZ) * 1.15, 16, 0x334155, 0x1e293b]}
+          position={[0, -0.01, 0]}
+        />
+      )}
     </group>
   );
 }
@@ -453,6 +490,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   hasMeasuredDem: initialHasDem = false,
   measuredElevationMeters = null,
   rasterPreviewUrl = null,
+  layerConfig,
   coordinates = null,
   onClearAnalysis,
 }) => {
@@ -460,19 +498,41 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   const [showContours, setShowContours] = useState<boolean>(false);
   const [showFloodMask, setShowFloodMask] = useState<boolean>(true);
   const [showRadarOverlay, setShowRadarOverlay] = useState<boolean>(false);
+  const [showSpatialGrid, setShowSpatialGrid] = useState<boolean>(true);
   const [hoveredPin, setHoveredPin] = useState<InfrastructurePin | null>(null);
   const [depthProbe, setDepthProbe] = useState<DepthProbeData | null>(null);
   const [cameraView, setCameraView] = useState<'perspective' | 'top' | 'crossSection'>('perspective');
   const [modalNotice, setModalNotice] = useState<string | null>(null);
+  const [waterStageOffset, setWaterStageOffset] = useState<number>(0.0);
+
+  // Single Authoritative Scene State (No Contradictions)
+  const sceneMode: SceneMode = useMemo(() => {
+    if (
+      analysisResult &&
+      (analysisResult.status === 'SUCCESS' || analysisResult.status === 'Completed') &&
+      analysisResult.mask_png_data_url
+    ) {
+      return 'validated-analysis';
+    }
+    if (analysisResult?.raster_preview_data_url || rasterPreviewUrl) {
+      return 'uploaded-imagery';
+    }
+    return 'catalog-reference';
+  }, [analysisResult, rasterPreviewUrl]);
+
+  // Sync with global layerConfig if provided
+  useEffect(() => {
+    if (layerConfig) {
+      setShowFloodMask(layerConfig.floodMask.enabled);
+      if (layerConfig.confidenceHeatmap.enabled) {
+        setShadingMode('probability');
+      } else if (shadingMode === 'probability') {
+        setShadingMode('satellite');
+      }
+    }
+  }, [layerConfig]);
 
   const controlsRef = useRef<any>(null);
-
-  const isVerifiedAnalysis = Boolean(
-    analysisResult &&
-    (analysisResult.status === 'SUCCESS' ||
-      analysisResult.status === 'Completed' ||
-      Boolean((analysisResult as any).analysis_id || (analysisResult as any).id))
-  );
 
   // Match selectedLocation to known global disaster catalog coordinates
   const matchedSpot = useMemo(() => {
@@ -594,7 +654,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
       } catch (err) {
         console.warn('Real-time DEM fetch failed:', err);
       }
-
       if (!isCancelled) {
         setRealtimeDem({
           hasDem: false,
@@ -622,7 +681,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   useEffect(() => {
     const lat = targetCoords.lat;
     const lon = targetCoords.lon;
-
     let isCancelled = false;
 
     const fetchWeather = async () => {
@@ -649,7 +707,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
       } catch (err) {
         console.warn('Live weather telemetry fetch failed:', err);
       }
-
       if (!isCancelled) {
         setRealtimeWeather(null);
       }
@@ -664,13 +721,12 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   // 3. Fetch real-time RainViewer Live Doppler Radar tile for scene coordinates
   useEffect(() => {
     let isCancelled = false;
-
     const fetchRadar = async () => {
       try {
         const meta = await getRainViewerMetadata();
         if (meta && meta.radar?.past && meta.radar.past.length > 0) {
           const latest = meta.radar.past[meta.radar.past.length - 1];
-          const zoom = 12;
+          const zoom = 10;
           const n = Math.pow(2, zoom);
           const tileX = Math.floor(((targetCoords.lon + 180) / 360) * n);
           const latRad = (targetCoords.lat * Math.PI) / 180;
@@ -732,8 +788,10 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
 
     const imgData = ctx.createImageData(dim, dim);
     for (let r = 0; r < dim; r++) {
+      // Invert row indexing so North (top of canvas) maps to North of elevation data
+      const demRow = dim - 1 - r;
       for (let c = 0; c < dim; c++) {
-        const idx = r * dim + c;
+        const idx = demRow * dim + c;
         const elev = elevs[idx] ?? minM;
         const norm = Math.max(0, Math.min(1, (elev - minM) / range));
 
@@ -742,23 +800,18 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
         let blue = 52;
 
         if (norm < 0.25) {
-          // Deep valley emerald: #15803d
           red = 21; green = 128; blue = 61;
         } else if (norm < 0.50) {
-          // Midland green-ochre: #65a30d
           red = 101; green = 163; blue = 13;
         } else if (norm < 0.75) {
-          // Terracotta / rock: #b45309
           red = 180; green = 83; blue = 9;
         } else if (norm < 0.90) {
-          // Mountain slate: #64748b
           red = 100; green = 116; blue = 139;
         } else {
-          // Snow peak: #f8fafc
           red = 248; green = 250; blue = 252;
         }
 
-        const p = idx * 4;
+        const p = (r * dim + c) * 4;
         imgData.data[p] = red;
         imgData.data[p + 1] = green;
         imgData.data[p + 2] = blue;
@@ -766,17 +819,17 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
       }
     }
     ctx.putImageData(imgData, 0, 0);
-
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.minFilter = THREE.LinearFilter;
     tex.magFilter = THREE.LinearFilter;
+    tex.flipY = true;
     return tex;
   }, [realtimeDem.hasDem, realtimeDem.elevations, realtimeDem.minM, realtimeDem.maxM]);
 
   // Fallback high-resolution Esri satellite tile for the scene coordinates
   const fallbackSatelliteTile = useMemo(() => {
-    return getEsriSatelliteTileUrl(targetCoords.lat, targetCoords.lon, 13);
+    return getEsriSatelliteTileUrl(targetCoords.lat, targetCoords.lon, 11);
   }, [targetCoords.lat, targetCoords.lon]);
 
   // Load and cache real textures with clean lifecycle disposal
@@ -801,16 +854,24 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
   }, [hypsometricTexture]);
 
   useEffect(() => {
-    const opticalUrl = analysisResult?.raster_preview_data_url || rasterPreviewUrl || fallbackSatelliteTile;
-    const maskUrl = (isVerifiedAnalysis && analysisResult?.flood_detected && analysisResult?.status === 'SUCCESS')
-      ? (analysisResult?.mask_png_data_url || null)
-      : null;
-    const heatmapUrl = (isVerifiedAnalysis && analysisResult?.status === 'SUCCESS')
-      ? (analysisResult?.confidence_heatmap_data_url || null)
-      : null;
+    const opticalUrl =
+      sceneMode === 'catalog-reference'
+        ? fallbackSatelliteTile
+        : analysisResult?.raster_preview_data_url || rasterPreviewUrl || fallbackSatelliteTile;
+
+    const maskUrl =
+      sceneMode === 'validated-analysis' && analysisResult?.mask_png_data_url
+        ? analysisResult.mask_png_data_url
+        : null;
+
+    const heatmapUrl =
+      sceneMode === 'validated-analysis' && analysisResult?.confidence_heatmap_data_url
+        ? analysisResult.confidence_heatmap_data_url
+        : null;
 
     let isCancelled = false;
     setIsLoadingTextures(true);
+
     const loader = new THREE.TextureLoader();
     loader.setCrossOrigin('anonymous');
 
@@ -831,6 +892,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             tex.generateMipmaps = false;
             tex.wrapS = THREE.ClampToEdgeWrapping;
             tex.wrapT = THREE.ClampToEdgeWrapping;
+            tex.flipY = true;
             tex.needsUpdate = true;
             resolve(tex);
           },
@@ -848,7 +910,8 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
       loadAsync(maskUrl),
       loadAsync(heatmapUrl),
       loadAsync(radarTileUrl),
-    ]).then(([optical, mask, heatmap, radar]) => {
+    ]).then(([opticalTex, mask, heatmap, radar]) => {
+      const optical = opticalTex || createProceduralTerrainTexture();
       if (!isCancelled) {
         setLoadedTextures((prev) => {
           prev.optical?.dispose();
@@ -871,6 +934,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
       setIsLoadingTextures(false);
     };
   }, [
+    sceneMode,
     (analysisResult as any)?.analysis_id,
     analysisResult?.raster_preview_data_url,
     analysisResult?.mask_png_data_url,
@@ -878,7 +942,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
     rasterPreviewUrl,
     fallbackSatelliteTile,
     radarTileUrl,
-    isVerifiedAnalysis,
     hypsometricTexture,
   ]);
 
@@ -888,48 +951,71 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
     if (!controlsRef.current) return;
     const maxDim = Math.max(sizeX, sizeZ);
     if (mode === 'top') {
-      controlsRef.current.object.position.set(0, maxDim * 1.45, 0.001);
+      // Top Nadir: Camera directly above center looking down, with up=(0, 0, -1) so North is UP on screen
+      controlsRef.current.object.up.set(0, 0, -1);
+      controlsRef.current.object.position.set(0, maxDim * 1.5, 0.0001);
     } else if (mode === 'crossSection') {
-      controlsRef.current.object.position.set(sizeX * 1.35, 0.15, 0);
+      controlsRef.current.object.up.set(0, 1, 0);
+      controlsRef.current.object.position.set(sizeX * 1.35, 0.25, 0);
     } else {
-      controlsRef.current.object.position.set(sizeX * 0.75, maxDim * 0.8, sizeZ * 0.85);
+      // 3D Perspective: Centered on X, positioned South looking North towards -Z
+      controlsRef.current.object.up.set(0, 1, 0);
+      controlsRef.current.object.position.set(0, maxDim * 0.95, sizeZ * 1.15);
     }
     controlsRef.current.target.set(0, 0, 0);
     controlsRef.current.update();
   };
 
-  const displayedArea = isVerifiedAnalysis
-    ? analysisResult?.physical_area_ha !== null && analysisResult?.physical_area_ha !== undefined
-      ? `${analysisResult?.physical_area_ha.toLocaleString()} ha`
-      : `${analysisResult?.coverage_percent}% coverage`
-    : 'NOT AVAILABLE — AWAITING UPLOAD';
-
-  const locationDisplay = analysisResult
-    ? (analysisResult.origin_lat != null && analysisResult.origin_lon != null
-      ? `${analysisResult.filename} (${analysisResult.origin_lat >= 0 ? analysisResult.origin_lat.toFixed(3) + '°N' : Math.abs(analysisResult.origin_lat).toFixed(3) + '°S'}, ${analysisResult.origin_lon >= 0 ? analysisResult.origin_lon.toFixed(3) + '°E' : Math.abs(analysisResult.origin_lon).toFixed(3) + '°W'})`
-      : analysisResult.filename)
-    : selectedLocation;
-
   const effectiveHasDem = realtimeDem.hasDem || initialHasDem;
   const effectiveDemMin = realtimeDem.minM ?? (measuredElevationMeters !== null ? measuredElevationMeters - 20 : null);
   const effectiveDemMax = realtimeDem.maxM ?? (measuredElevationMeters !== null ? measuredElevationMeters + 20 : null);
 
+  // Formulate authoritative location and area readouts based strictly on sceneMode
+  const locationDisplay = useMemo(() => {
+    if (sceneMode === 'validated-analysis' || sceneMode === 'uploaded-imagery') {
+      if (analysisResult?.filename) {
+        if (analysisResult.origin_lat != null && analysisResult.origin_lon != null) {
+          const latStr = analysisResult.origin_lat >= 0 ? `${analysisResult.origin_lat.toFixed(3)}°N` : `${Math.abs(analysisResult.origin_lat).toFixed(3)}°S`;
+          const lonStr = analysisResult.origin_lon >= 0 ? `${analysisResult.origin_lon.toFixed(3)}°E` : `${Math.abs(analysisResult.origin_lon).toFixed(3)}°W`;
+          return `${analysisResult.filename} (${latStr}, ${lonStr})`;
+        }
+        return analysisResult.filename;
+      }
+    }
+    return `${matchedSpot.name}, ${matchedSpot.country}`;
+  }, [sceneMode, analysisResult, matchedSpot]);
+
+  const displayedArea = useMemo(() => {
+    if (sceneMode === 'validated-analysis') {
+      if (analysisResult?.physical_area_ha != null) {
+        return `${analysisResult.physical_area_ha.toFixed(1)} ha`;
+      }
+      return 'Calculating...';
+    }
+    if (sceneMode === 'uploaded-imagery') {
+      return 'Not Run';
+    }
+    return `${matchedSpot.estimatedInundationHa.toLocaleString()} ha (Historical Benchmark)`;
+  }, [sceneMode, analysisResult, matchedSpot]);
+
   return (
     <div className={`relative w-full rounded-2xl bg-slate-950 border border-slate-800/90 overflow-hidden shadow-2xl flex flex-col ${className}`}>
-      
       {/* 3D WebGL Canvas Viewport */}
       <div className="relative w-full h-[520px] sm:h-[580px] bg-[#030712]">
-        
         {isLoadingTextures && (
           <div className="absolute inset-0 z-30 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center gap-2 font-mono text-xs text-cyan-300">
             <div className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-            <span>Mapping Decoded Satellite Textures...</span>
+            <span>Mapping Satellite Textures...</span>
           </div>
         )}
 
         <Canvas shadows gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}>
           <color attach="background" args={['#030712']} />
-          <PerspectiveCamera makeDefault position={[sizeX * 0.75, Math.max(sizeX, sizeZ) * 0.8, sizeZ * 0.85]} fov={42} />
+          <PerspectiveCamera
+            makeDefault
+            position={[0, Math.max(sizeX, sizeZ) * 0.95, sizeZ * 1.15]}
+            fov={42}
+          />
           <OrbitControls
             ref={controlsRef}
             enableDamping
@@ -938,7 +1024,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             maxDistance={22}
             maxPolarAngle={Math.PI / 2.02}
           />
-
           <ambientLight intensity={1.5} color="#f8fafc" />
           <directionalLight
             position={[sizeX * 0.8, 12, sizeZ * 0.7]}
@@ -956,6 +1041,8 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             showContours={showContours}
             showFloodMask={showFloodMask}
             showRadarOverlay={showRadarOverlay}
+            showGrid={showSpatialGrid}
+            sceneMode={sceneMode}
             hasMeasuredDem={effectiveHasDem}
             demElevations={realtimeDem.elevations}
             demMinM={effectiveDemMin}
@@ -964,39 +1051,128 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             analysisResult={analysisResult}
             loadedTextures={loadedTextures}
             effectiveBounds={effectiveBounds}
+            waterStageOffset={waterStageOffset}
             onHoverPin={setHoveredPin}
             onProbeDepth={setDepthProbe}
           />
         </Canvas>
+
+        {/* Side Profile Elevation Cross-Section View Overlay */}
+        {cameraView === 'crossSection' && effectiveHasDem && realtimeDem.elevations && (
+          <div className="absolute inset-0 z-35 bg-slate-950/96 p-6 flex flex-col justify-between font-mono text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-cyan-400 font-bold">
+                <Mountain className="w-4 h-4" />
+                <span>BASIN TOPOGRAPHIC CROSS-SECTION (5KM TRANSECT)</span>
+              </div>
+              <button
+                onClick={() => resetCamera('perspective')}
+                className="px-3 py-1 rounded bg-slate-900 border border-slate-700 text-slate-300 hover:text-white cursor-pointer"
+              >
+                Return to 3D View
+              </button>
+            </div>
+
+            <div className="flex-1 flex items-center justify-center p-4">
+              <svg className="w-full h-48 overflow-visible" viewBox="0 0 600 200">
+                {[0, 50, 100, 150, 200].map((y, idx) => (
+                  <line key={idx} x1="0" y1={y} x2="600" y2={y} stroke="#1e293b" strokeDasharray="4,4" />
+                ))}
+                <path
+                  d={
+                    `M 0 200 ` +
+                    realtimeDem.elevations.slice(0, 30).map((e, i) => {
+                      const minE = realtimeDem.minM || 0;
+                      const maxE = realtimeDem.maxM || 100;
+                      const span = Math.max(1, maxE - minE);
+                      const norm = (e - minE) / span;
+                      const x = (i / 29) * 600;
+                      const y = 180 - norm * 140;
+                      return `L ${x} ${y}`;
+                    }).join(' ') +
+                    ` L 600 200 Z`
+                  }
+                  fill="rgba(6, 182, 212, 0.15)"
+                  stroke="#06b6d4"
+                  strokeWidth="2.5"
+                />
+                <line
+                  x1="0"
+                  y1={80 - waterStageOffset * 20}
+                  x2="600"
+                  y2={80 - waterStageOffset * 20}
+                  stroke="#38bdf8"
+                  strokeWidth="2"
+                  strokeDasharray="6,4"
+                />
+                <text x="10" y="70" fill="#38bdf8" fontSize="10">
+                  Simulation Water Surface (+{waterStageOffset.toFixed(1)}m)
+                </text>
+              </svg>
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-800 pt-2">
+              <span>Transect Start: West Catchment Boundary</span>
+              <span className="text-cyan-300 font-bold">
+                Relief: {((realtimeDem.maxM || 100) - (realtimeDem.minM || 0)).toFixed(1)}m MSL
+              </span>
+              <span>Transect End: East Catchment Boundary</span>
+            </div>
+          </div>
+        )}
 
         {/* Top-Left Telemetry & Verification Provenance HUD */}
         <div className="absolute top-3 left-3 pointer-events-none z-10 space-y-1.5">
           <div className="bg-slate-950/92 backdrop-blur-md px-3.5 py-2.5 rounded-xl border border-slate-800/90 shadow-xl pointer-events-auto max-w-sm text-left">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isVerifiedAnalysis ? 'bg-cyan-400 animate-pulse' : 'bg-slate-500'}`} />
+                <div
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                    sceneMode === 'validated-analysis'
+                      ? 'bg-cyan-400'
+                      : sceneMode === 'uploaded-imagery'
+                      ? 'bg-amber-400'
+                      : 'bg-slate-500'
+                  }`}
+                />
                 <span className="text-xs font-mono font-bold text-white tracking-wide truncate">
                   {locationDisplay}
                 </span>
               </div>
-              <span className={`text-[9px] font-mono px-2 py-0.5 rounded border shrink-0 font-bold ${
-                isVerifiedAnalysis
-                  ? 'text-cyan-300 bg-cyan-950/80 border-cyan-700'
-                  : 'text-slate-400 bg-slate-900 border-slate-800'
-              }`}>
-                {isVerifiedAnalysis ? 'VERIFIED RASTER SCENE' : 'NO UPLOAD LOADED'}
+              <span
+                className={`text-[9px] font-mono px-2 py-0.5 rounded border shrink-0 font-bold ${
+                  sceneMode === 'validated-analysis'
+                    ? 'text-cyan-300 bg-cyan-950/80 border-cyan-700'
+                    : sceneMode === 'uploaded-imagery'
+                    ? 'text-amber-300 bg-amber-950/80 border-amber-700'
+                    : 'text-slate-400 bg-slate-900 border-slate-800'
+                }`}
+              >
+                {sceneMode === 'validated-analysis'
+                  ? 'VALIDATED U-NET ANALYSIS'
+                  : sceneMode === 'uploaded-imagery'
+                  ? 'UPLOADED RASTER SCENE'
+                  : 'CATALOG REFERENCE'}
               </span>
             </div>
 
-            {/* Truthful Physical Measurements Readout */}
+            {/* Physical Measurements Readout */}
             <div className="grid grid-cols-3 gap-2 text-[10px] font-mono pt-2 mt-1.5 border-t border-slate-800/80">
               <div>
                 <span className="text-slate-400 block">Flood Extent</span>
                 <span className="text-cyan-300 font-bold tabular-nums">
-                  {isVerifiedAnalysis ? `${analysisResult?.coverage_percent}%` : 'Unavailable'}
+                  {sceneMode === 'validated-analysis'
+                    ? `${analysisResult?.coverage_percent}%`
+                    : sceneMode === 'uploaded-imagery'
+                    ? 'Pending'
+                    : 'Historical'}
                 </span>
                 <span className="text-[9px] text-slate-500 block">
-                  {isVerifiedAnalysis ? 'U-Net Model' : 'No analysis'}
+                  {sceneMode === 'validated-analysis'
+                    ? 'U-Net Model'
+                    : sceneMode === 'uploaded-imagery'
+                    ? 'Awaiting Inference'
+                    : 'Reference Catalog'}
                 </span>
               </div>
               <div>
@@ -1006,14 +1182,17 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                     <span className="text-white font-bold tabular-nums">
                       {effectiveDemMin.toFixed(0)}m – {effectiveDemMax.toFixed(0)}m MSL
                     </span>
-                    <span className="text-[9px] text-cyan-400 block truncate" title={realtimeDem.source}>
-                      Copernicus GLO-90 DEM
+                    <span
+                      className="text-[9px] text-cyan-400 block truncate"
+                      title="Open-Meteo unauthenticated Elevation API (~90m point elevation sampling, Copernicus GLO-90 DEM). Discrete point samples; not a continuous raster DEM."
+                    >
+                      Point Samples (~90m)
                     </span>
                   </>
                 ) : realtimeDem.isLoading ? (
                   <>
-                    <span className="text-cyan-400 animate-pulse font-semibold">Loading...</span>
-                    <span className="text-[9px] text-slate-500 block">Querying Copernicus DEM</span>
+                    <span className="text-cyan-400 font-semibold">Loading...</span>
+                    <span className="text-[9px] text-slate-500 block">Querying Elevation Samples</span>
                   </>
                 ) : (
                   <>
@@ -1024,11 +1203,20 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               </div>
               <div>
                 <span className="text-slate-400 block">Flooded Area</span>
-                <span className={`font-bold tabular-nums ${isVerifiedAnalysis ? 'text-cyan-300' : 'text-slate-500'}`}>
+                <span
+                  className={`font-bold tabular-nums truncate block ${
+                    sceneMode === 'validated-analysis' ? 'text-cyan-300' : 'text-slate-400'
+                  }`}
+                  title={displayedArea}
+                >
                   {displayedArea}
                 </span>
                 <span className="text-[9px] text-slate-500 block">
-                  {isVerifiedAnalysis ? (analysisResult?.area_calculation_method || 'Calculated') : 'Unavailable'}
+                  {sceneMode === 'validated-analysis'
+                    ? analysisResult?.area_calculation_method || 'Calculated'
+                    : sceneMode === 'uploaded-imagery'
+                    ? 'Inference Required'
+                    : 'Historical Benchmark'}
                 </span>
               </div>
             </div>
@@ -1037,8 +1225,8 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             {realtimeWeather && (
               <div className="flex items-center justify-between text-[9px] font-mono text-slate-300 pt-1.5 mt-1 border-t border-slate-800/80">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="text-emerald-400 font-bold uppercase tracking-wider shrink-0">LIVE METEOROLOGY:</span>
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="text-emerald-400 font-bold uppercase tracking-wider shrink-0">METEOROLOGY:</span>
                   <span className="truncate">{realtimeWeather.weatherDesc}</span>
                   <span>·</span>
                   <span className="text-white font-bold shrink-0">{realtimeWeather.temperatureC}°C</span>
@@ -1049,35 +1237,24 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                     </>
                   )}
                 </div>
-                <span className="text-[8px] text-slate-500 shrink-0">Real-Time Open-Meteo</span>
+                <span className="text-[8px] text-slate-500 shrink-0">Open-Meteo</span>
               </div>
             )}
-
-            <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 pt-1.5 mt-1 border-t border-slate-800/60">
-              <span className={isVerifiedAnalysis ? 'text-cyan-400 font-medium' : 'text-slate-400'}>
-                {isVerifiedAnalysis
-                  ? (effectiveHasDem
-                    ? 'REAL MODEL INFERENCE · COPERNICUS GLO-90 DEM ELEVATION ACTIVE'
-                    : '2D imagery — elevation unavailable. Real satellite imagery mapped on flat reference plane.')
-                  : 'Awaiting raster upload. Upload Sentinel-2 GeoTIFF to inspect flood extent.'}
-              </span>
-            </div>
           </div>
         </div>
 
         {/* Top-Right Shading & Modality Selector */}
         <div className="absolute top-3 right-3 flex flex-col items-end gap-1.5 z-10 pointer-events-auto">
-          
           <div className="bg-slate-950/92 backdrop-blur-md p-1 rounded-xl border border-slate-800/90 flex items-center gap-1 shadow-xl text-[10px] font-mono flex-wrap justify-end">
             <button
               onClick={() => { setShadingMode('satellite'); setModalNotice(null); }}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
                 shadingMode === 'satellite'
-                  ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                  ? 'bg-cyan-500 text-slate-950 font-bold'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              Sentinel-2 Optical (S2)
+              Satellite Imagery
             </button>
             <button
               onClick={() => {
@@ -1085,22 +1262,22 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                   setShadingMode('radar');
                   setModalNotice(null);
                 } else {
-                  setModalNotice('LIVE RADAR UNAVAILABLE: Live RainViewer Doppler radar tile is querying for scene coordinates.');
+                  setModalNotice('LIVE RADAR UNAVAILABLE: RainViewer Doppler radar tile unavailable for scene coordinates.');
                 }
               }}
               title="Real-time RainViewer Doppler precipitation radar surface"
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
                 shadingMode === 'radar'
-                  ? 'bg-emerald-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                  ? 'bg-emerald-500 text-slate-950 font-bold'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Radio className="w-3 h-3 text-emerald-400" />
-              <span>Live Doppler Radar</span>
+              <span>Weather Radar</span>
             </button>
             <button
               onClick={() => {
-                if (loadedTextures.heatmap) {
+                if (sceneMode === 'validated-analysis' && loadedTextures.heatmap) {
                   setShadingMode('probability');
                   setModalNotice(null);
                 } else {
@@ -1111,14 +1288,14 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               }}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
                 shadingMode === 'probability'
-                  ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
-                  : !loadedTextures.heatmap
+                  ? 'bg-cyan-500 text-slate-950 font-bold'
+                  : !loadedTextures.heatmap || sceneMode !== 'validated-analysis'
                   ? 'text-slate-500 hover:text-slate-400'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
-              {!loadedTextures.heatmap && <Lock className="w-3 h-3 text-slate-500" />}
-              <span>U-Net Probability (P)</span>
+              {(!loadedTextures.heatmap || sceneMode !== 'validated-analysis') && <Lock className="w-3 h-3 text-slate-500" />}
+              <span>Flood Probability</span>
             </button>
             <button
               onClick={() => {
@@ -1134,7 +1311,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               title={effectiveHasDem ? 'Switch to Copernicus DEM hypsometric tinting' : 'Elevation tint requires DEM'}
               className={`px-2.5 py-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${
                 shadingMode === 'hypsometric'
-                  ? 'bg-cyan-500 text-slate-950 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                  ? 'bg-cyan-500 text-slate-950 font-bold'
                   : !effectiveHasDem
                   ? 'text-slate-500 hover:text-slate-400 bg-slate-900/60 border border-slate-800'
                   : 'text-slate-400 hover:text-white'
@@ -1142,30 +1319,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             >
               {!effectiveHasDem && <Lock className="w-3 h-3 text-amber-500" />}
               <span>Elevation Tint</span>
-            </button>
-            <button
-              onClick={() => {
-                setModalNotice(
-                  'DEPTH HAZARD UNAVAILABLE: Satellite optical imagery captures 2D inundation extent. Bathymetry, lidar DEM, or hydraulic gauge data is required to calculate water depth without fabrication.'
-                );
-              }}
-              title="Water depth requires bathymetry or DEM"
-              className="px-2.5 py-1 rounded-lg text-slate-500 hover:text-slate-400 flex items-center gap-1 cursor-pointer bg-slate-900/60 border border-slate-800"
-            >
-              <Lock className="w-3 h-3 text-amber-500" />
-              <span>Depth Hazard</span>
-            </button>
-            <button
-              onClick={() => {
-                setModalNotice(
-                  'SAR LAYER DISABLED: Current FloodSight-UNet-ResNet34 checkpoint is trained strictly on Sentinel-2 optical bands (B4, B3, B2). Processing Sentinel-1 C-band SAR radar requires a separate radar-trained model contract.'
-                );
-              }}
-              title="Sentinel-1 SAR is disabled for optical models"
-              className="px-2.5 py-1 rounded-lg text-slate-500 hover:text-slate-400 flex items-center gap-1 cursor-pointer bg-slate-900/60 border border-slate-800"
-            >
-              <Lock className="w-3 h-3 text-amber-500" />
-              <span>Sentinel-1 SAR</span>
             </button>
           </div>
 
@@ -1207,10 +1360,20 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                 Top Nadir
               </button>
               <button
-                onClick={() => resetCamera('crossSection')}
+                onClick={() => {
+                  if (effectiveHasDem && realtimeDem.elevations) {
+                    resetCamera('crossSection');
+                  } else {
+                    setModalNotice('Side profile cross-section requires authenticated elevation data (Copernicus DEM).');
+                  }
+                }}
                 aria-label="Side Profile Camera"
-                className={`px-2 py-0.8 rounded transition-colors cursor-pointer ${
-                  cameraView === 'crossSection' ? 'bg-slate-800 text-cyan-300 font-bold' : 'text-slate-400 hover:text-white'
+                className={`px-2 py-0.8 rounded transition-colors cursor-pointer flex items-center gap-1 ${
+                  cameraView === 'crossSection'
+                    ? 'bg-slate-800 text-cyan-300 font-bold'
+                    : effectiveHasDem && realtimeDem.elevations
+                    ? 'text-slate-400 hover:text-white'
+                    : 'text-slate-600 cursor-not-allowed opacity-50'
                 }`}
               >
                 Side Profile
@@ -1225,63 +1388,55 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               </button>
             </div>
           </div>
-
         </div>
 
         {/* Real-Time Interactive 3D Depth Probe Tooltip */}
         {depthProbe && (
           <div className="absolute top-28 left-3 p-3 rounded-xl bg-slate-950/95 border border-cyan-500/50 backdrop-blur-md shadow-2xl text-left space-y-1 z-20 pointer-events-none font-mono text-xs max-w-xs">
             <div className="flex items-center justify-between text-cyan-300 font-bold text-[10px] pb-1 border-b border-slate-800">
-              <div className="flex items-center gap-1.5">
-                <Crosshair className="w-3.5 h-3.5 text-cyan-400 animate-spin" />
-                <span>SURFACE RAYCAST PROBE</span>
-              </div>
-              <span className="text-[9px] text-slate-400">10m GSD</span>
+              <span className="flex items-center gap-1">
+                <Compass className="w-3.5 h-3.5 text-cyan-400" />
+                <span>COORDINATE PROBE</span>
+              </span>
+              <span>
+                {depthProbe.lat !== null && depthProbe.lon !== null
+                  ? `${depthProbe.lat.toFixed(4)}°, ${depthProbe.lon.toFixed(4)}°`
+                  : 'Relative Grid'}
+              </span>
             </div>
-
-            <div className="text-[10px] text-slate-300 space-y-0.5 pt-0.5">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Geographic Coords:</span>
-                <span className="text-white font-bold">
-                  {depthProbe.lat !== null && depthProbe.lon !== null
-                    ? `${depthProbe.lat.toFixed(4)}°, ${depthProbe.lon.toFixed(4)}°`
-                    : 'Unreferenced'}
-                </span>
-              </div>
+            <div className="space-y-0.5 text-[10px] pt-1">
               <div className="flex justify-between">
                 <span className="text-slate-400">Ground Elevation:</span>
-                <span className="text-white font-bold">
+                <span className="text-white font-bold tabular-nums">
                   {depthProbe.groundElevationMeters !== null
                     ? `${depthProbe.groundElevationMeters}m MSL`
-                    : 'Unavailable (No DEM)'}
+                    : 'Unavailable (Flat Plane)'}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-400">Flood Inundation Depth:</span>
-                <span className="text-cyan-300 font-bold">
-                  {depthProbe.submergedDepthMeters !== null
-                    ? `+${depthProbe.submergedDepthMeters}m`
-                    : 'Depth Unavailable (Requires Bathymetry)'}
+                <span className="text-slate-400">Water Depth:</span>
+                <span className="text-amber-300 font-semibold">
+                  Unavailable (Requires Bathymetry)
                 </span>
               </div>
-              <div className="text-[9px] text-cyan-400 pt-0.5">
-                Classification: <strong>{depthProbe.classification}</strong>
+              <div className="text-[9px] text-cyan-400 pt-0.5 truncate">
+                Status: <strong>{depthProbe.classification}</strong>
               </div>
             </div>
           </div>
         )}
 
-        {/* Flood Extent & Scale HUD */}
+        {/* Truthful Scene Status Readout Box */}
         {!hoveredPin && (
           <div className="absolute bottom-4 left-3 max-w-xs p-2.5 rounded-xl bg-slate-950/95 border border-slate-800/90 backdrop-blur-md shadow-2xl z-20 font-mono text-[10px] space-y-1.5 text-left">
             <div className="flex items-center justify-between border-b border-slate-800 pb-1 text-slate-300 font-bold">
               <span className="flex items-center gap-1 text-cyan-400">
                 <Layers className="w-3.5 h-3.5" />
-                {shadingMode === 'probability'
-                  ? 'U-NET PROBABILITY HEATMAP'
-                  : shadingMode === 'hypsometric'
-                  ? 'COPERNICUS DEM HYPSOMETRIC TINT'
-                  : 'SENTINEL-2 OPTICAL IMAGERY'}
+                {sceneMode === 'validated-analysis'
+                  ? 'VALIDATED FLOOD ANALYSIS'
+                  : sceneMode === 'uploaded-imagery'
+                  ? 'UPLOADED SATELLITE RASTER'
+                  : 'CATALOG REFERENCE BASEMAP'}
               </span>
               <span className="text-[9px] text-slate-500">
                 {effectiveHasDem ? 'Copernicus DEM' : 'Flat Reference Plane'}
@@ -1321,13 +1476,23 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                 <div className="flex items-center gap-1.5 text-cyan-400">
                   <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                   <span>
-                    {loadedTextures.optical ? 'Real uploaded satellite raster mapped' : 'Awaiting raster upload'}
+                    {sceneMode === 'validated-analysis'
+                      ? 'Validated U-Net analysis mapped'
+                      : sceneMode === 'uploaded-imagery'
+                      ? 'Decoded satellite raster mapped (North-Up)'
+                      : 'Satellite basemap reference mapped'}
                   </span>
                 </div>
                 <p className="text-slate-500 text-[8px] leading-relaxed">
-                  {effectiveHasDem
-                    ? 'Authenticated topography: Vertices displaced using real-time Copernicus GLO-90 DEM.'
-                    : '2D imagery — elevation unavailable. Terrain rendered on flat georeferenced reference plane.'}
+                  {sceneMode === 'catalog-reference'
+                    ? 'Catalog reference scene showing baseline satellite imagery. Upload a Sentinel-2 GeoTIFF to run active flood detection.'
+                    : sceneMode === 'uploaded-imagery'
+                    ? (effectiveHasDem
+                        ? 'Authenticated topography: Vertices displaced using real-time Copernicus GLO-90 DEM.'
+                        : 'Elevation unavailable. Decoded raster rendered on flat georeferenced reference plane.')
+                    : (effectiveHasDem
+                        ? 'Authenticated topography: Vertices displaced using real-time Copernicus GLO-90 DEM.'
+                        : 'Elevation unavailable. Analysis mask rendered on flat georeferenced reference plane.')}
                 </p>
               </div>
             )}
@@ -1350,35 +1515,53 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
             )}
             {hoveredPin.probability != null && (
               <p className="text-[10px] text-slate-400">
-                Mean Probability: <strong>{((hoveredPin.probability) * 100).toFixed(1)}%</strong>
+                Mean Probability: <strong>{(hoveredPin.probability * 100).toFixed(1)}%</strong>
               </p>
             )}
           </div>
         )}
-
       </div>
 
       {/* Bottom Spatial Controls Deck */}
       <div className="p-3.5 bg-slate-950 border-t border-slate-800/90 space-y-3 font-mono">
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-          
           <div className="flex items-center gap-4 flex-wrap">
-            <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+            {/* Flood Inundation Mask Toggle */}
+            <label
+              className={`flex items-center gap-1.5 ${
+                sceneMode === 'validated-analysis' ? 'text-slate-300 cursor-pointer' : 'text-slate-600 cursor-not-allowed opacity-60'
+              }`}
+              title={
+                sceneMode === 'validated-analysis'
+                  ? 'Toggle verified flood mask overlay'
+                  : 'Flood mask overlay requires a completed model analysis'
+              }
+            >
               <input
                 type="checkbox"
-                checked={showFloodMask}
+                checked={showFloodMask && sceneMode === 'validated-analysis'}
+                disabled={sceneMode !== 'validated-analysis'}
                 onChange={(e) => setShowFloodMask(e.target.checked)}
-                className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+                className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0 disabled:opacity-40"
               />
-              <span className="font-semibold text-cyan-300">Flood Inundation Mask Overlay</span>
+              <span className={`font-semibold ${sceneMode === 'validated-analysis' ? 'text-cyan-300' : 'text-slate-500'}`}>
+                Flood Inundation Mask Overlay
+              </span>
             </label>
 
-            <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+            {/* Live Weather Radar Overlay */}
+            <label
+              className={`flex items-center gap-1.5 ${
+                loadedTextures.radar || radarTileUrl ? 'text-slate-300 cursor-pointer' : 'text-slate-600 cursor-not-allowed opacity-60'
+              }`}
+              title={loadedTextures.radar || radarTileUrl ? 'Toggle RainViewer live Doppler radar (Attribution: RainViewer under ODbL · Contextual precipitation only, never modifies flood model predictions or area)' : 'Radar data unavailable for current extent'}
+            >
               <input
                 type="checkbox"
-                checked={showRadarOverlay}
+                checked={showRadarOverlay && Boolean(loadedTextures.radar || radarTileUrl)}
+                disabled={!loadedTextures.radar && !radarTileUrl}
                 onChange={(e) => setShowRadarOverlay(e.target.checked)}
-                className="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-0"
+                className="rounded bg-slate-900 border-slate-700 text-emerald-500 focus:ring-0 disabled:opacity-40"
               />
               <span className="font-semibold text-emerald-300 flex items-center gap-1">
                 <Radio className="w-3 h-3 text-emerald-400" />
@@ -1386,6 +1569,7 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
               </span>
             </label>
 
+            {/* Elevation Contours Toggle */}
             {effectiveHasDem && (
               <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
                 <input
@@ -1397,6 +1581,44 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
                 <span>Elevation Contours</span>
               </label>
             )}
+
+            {/* Spatial Reference Grid Toggle */}
+            <label className="flex items-center gap-1.5 text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showSpatialGrid}
+                onChange={(e) => setShowSpatialGrid(e.target.checked)}
+                className="rounded bg-slate-900 border-slate-700 text-cyan-500 focus:ring-0"
+              />
+              <span className="flex items-center gap-1">
+                <Grid className="w-3 h-3 text-slate-400" />
+                <span>Spatial Grid</span>
+              </span>
+            </label>
+
+            {/* Hypothetical Simulation Water Stage Slider */}
+            <div
+              className="flex items-center gap-2 bg-slate-900/90 px-3 py-1 rounded-xl border border-slate-800"
+              title="Hypothetical scenario parameter for visualization simulation only. Analytical water depth requires calibrated bathymetry or stream gauge data."
+            >
+              <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                <Waves className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Water Stage:</span>
+              </span>
+              <input
+                type="range"
+                min="0.0"
+                max="2.0"
+                step="0.1"
+                value={waterStageOffset}
+                onChange={(e) => setWaterStageOffset(parseFloat(e.target.value))}
+                className="w-20 h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800"
+              />
+              <span className="text-[11px] font-bold text-white tabular-nums">+{waterStageOffset.toFixed(1)}m</span>
+              <span className="text-[9px] text-amber-400/90 font-sans border border-amber-500/20 px-1 py-0.5 rounded bg-amber-950/30">
+                Simulation
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-3 text-[10px] text-slate-400">
@@ -1412,7 +1634,6 @@ export const ExtrudedFloodTerrainR3F: React.FC<ExtrudedFloodTerrainProps> = ({
           </div>
         </div>
       </div>
-
     </div>
   );
 };

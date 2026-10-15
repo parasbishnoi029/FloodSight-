@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, 
   AlertTriangle, 
@@ -11,10 +11,12 @@ import {
   Database,
   RefreshCw,
   Compass,
-  FileCheck
+  FileCheck,
+  Key,
+  ExternalLink
 } from 'lucide-react';
 import { HydrologyObservation, SatelliteCatalogProduct } from '../../types';
-import { formatFreshness } from '../../services/dataFreshness';
+import { formatFreshness, getCopernicusStatus, CopernicusStatusResponse } from '../../services/dataFreshness';
 
 interface DataQualityPanelProps {
   locationName: string;
@@ -38,6 +40,13 @@ export const DataQualityPanel: React.FC<DataQualityPanelProps> = ({
   isRefreshing = false
 }) => {
   const hasValidCoords = lat != null && lon != null && (lat !== 0 || lon !== 0);
+  const [copernicusStatus, setCopernicusStatus] = useState<CopernicusStatusResponse | null>(null);
+
+  useEffect(() => {
+    getCopernicusStatus().then(status => {
+      if (status) setCopernicusStatus(status);
+    });
+  }, [isRefreshing]);
 
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-xl backdrop-blur-md space-y-4">
@@ -78,16 +87,16 @@ export const DataQualityPanel: React.FC<DataQualityPanelProps> = ({
 
       {/* Grid of Verified Source Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Card 1: Satellite Observation (Copernicus CDSE) */}
+        {/* Card 1: Satellite Observation (Microsoft Planetary Computer STAC) */}
         <div className="bg-slate-950/60 border border-slate-800/80 rounded-lg p-3 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
               <Satellite className="w-3.5 h-3.5 text-cyan-400" />
-              Copernicus Sentinel-2 MSI
+              Sentinel-2 L2A (Planetary Computer)
             </span>
             {satelliteProduct?.found ? (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" /> VERIFIED
+                <CheckCircle2 className="w-3 h-3" /> VERIFIED STAC
               </span>
             ) : satelliteProduct?.status === 'SOURCE UNAVAILABLE' ? (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-rose-950/80 text-rose-300 border border-rose-800 flex items-center gap-1">
@@ -102,24 +111,45 @@ export const DataQualityPanel: React.FC<DataQualityPanelProps> = ({
 
           <div className="text-[11px] space-y-1 font-mono text-slate-400">
             <div>
-              <span className="text-slate-500">Platform:</span>{' '}
-              <span className="text-slate-200">{satelliteProduct?.platform || 'Sentinel-2 (ESA)'}</span>
+              <span className="text-slate-500">Source:</span>{' '}
+              <span className="text-slate-200">Microsoft Planetary Computer STAC v1</span>
             </div>
             <div>
-              <span className="text-slate-500">Acquisition (UTC):</span>{' '}
-              <span className="text-cyan-300">{satelliteProduct?.acquisition_timestamp ? satelliteProduct.acquisition_timestamp.replace('T', ' ').slice(0, 19) + ' UTC' : 'Querying STAC...'}</span>
+              <span className="text-slate-500">Item ID:</span>{' '}
+              <span className="text-cyan-300 truncate block text-[10px]" title={satelliteProduct?.product_id || 'Querying STAC'}>
+                {satelliteProduct?.product_id ? satelliteProduct.product_id.slice(0, 36) + '...' : 'Searching catalog...'}
+              </span>
             </div>
             <div>
-              <span className="text-slate-500">Freshness:</span>{' '}
-              <span className="text-slate-300">{formatFreshness(satelliteProduct?.acquisition_timestamp)}</span>
+              <span className="text-slate-500">Acquisition Time:</span>{' '}
+              <span className="text-white font-semibold">
+                {satelliteProduct?.acquisition_timestamp
+                  ? satelliteProduct.acquisition_timestamp.replace('T', ' ').slice(0, 19) + ' UTC'
+                  : 'Searching...'}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-500">API Retrieval Time:</span>{' '}
+              <span className="text-slate-300">
+                {satelliteProduct?.retrieval_timestamp
+                  ? satelliteProduct.retrieval_timestamp.replace('T', ' ').slice(0, 19) + ' UTC'
+                  : 'Pending'}
+              </span>
             </div>
             <div>
               <span className="text-slate-500">Cloud Cover:</span>{' '}
               <span className="text-slate-200">{satelliteProduct?.cloud_cover_percent != null ? `${satelliteProduct.cloud_cover_percent}%` : 'N/A'}</span>
             </div>
             <div>
-              <span className="text-slate-500">Resolution (GSD):</span>{' '}
-              <span className="text-slate-200">10.0 meters / pixel</span>
+              <span className="text-slate-500">Available Assets:</span>{' '}
+              <span className="text-emerald-400 text-[10px]">B02 (Blue), B03 (Green), B04 (Red), visual</span>
+            </div>
+            <div className="pt-1 mt-1 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
+              <span className="text-slate-500">Access Policy:</span>
+              <span className="text-emerald-400 font-medium">Free · Public SAS · No Account</span>
+            </div>
+            <div className="text-[9px] text-slate-500 pt-0.5 leading-tight">
+              Genuine Sentinel-2 L2A imagery retrieved via Microsoft Planetary Computer unauthenticated public STAC API. Zero credentials required.
             </div>
           </div>
         </div>
@@ -220,14 +250,20 @@ export const DataQualityPanel: React.FC<DataQualityPanelProps> = ({
       </div>
 
       {/* Disclosures & Scientific Validity Footer */}
-      <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-2.5 flex items-start gap-2.5 text-xs text-slate-400">
+      <div className="bg-slate-950/40 border border-slate-800/60 rounded-lg p-3 flex items-start gap-2.5 text-xs text-slate-400">
         <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <p className="text-slate-300 font-medium">
-            Zero-Fabrication Policy Enforced:
+            Zero-Fabrication & Scientific Source Attribution Policy:
           </p>
           <p className="text-[11px] text-slate-400 leading-relaxed">
-            FloodSight AI does not draw mathematical sine-wave polygons or simulate flood extents. Map inundation layers are strictly displayed when verified model inference has completed on genuine satellite rasters. Emergency road severed vectors and shelter networks remain disabled until ground-truth DOT/OSM infrastructure intersection datasets are validated.
+            <strong className="text-slate-300">Satellite Imagery:</strong> Retrieved via Microsoft Planetary Computer unauthenticated STAC API from Copernicus Sentinel-2 L2A (10m bands B02, B03, B04). No account required.
+          </p>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            <strong className="text-slate-300">Elevation Sampling:</strong> Open-Meteo Elevation API provides discrete point elevation samples (~90m nominal resolution, Copernicus GLO-90 DEM). These are discrete point samples, not a continuous high-resolution raster DEM. Continuous 3D topography uses flat optical plane when continuous DEM raster is absent.
+          </p>
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            <strong className="text-slate-300">Live Weather Radar:</strong> Contextual radar tiles provided by RainViewer under ODbL. Weather radar data is strictly contextual and never modifies model probabilities, flood extents, or area calculations.
           </p>
         </div>
       </div>

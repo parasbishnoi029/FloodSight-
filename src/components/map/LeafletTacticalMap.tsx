@@ -17,7 +17,7 @@ const BASEMAP_TILES = {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
     maxZoom: 19,
-    maxNativeZoom: 17
+    maxNativeZoom: 15
   },
   roadmap: {
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -181,6 +181,30 @@ export const LeafletTacticalMap: React.FC<LeafletTacticalMapProps> = ({
     }
   }, [selectedLocation, satelliteProduct, hydrology]);
 
+  const [zoomAlert, setZoomAlert] = React.useState<string | null>(null);
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    map.setMinZoom(2);
+    map.setMaxZoom(19);
+
+    const onZoomEnd = () => {
+      const z = map.getZoom();
+      if (z >= 19) {
+        setZoomAlert('Max zoom level (19) reached. Clamped to supported tile resolution.');
+        setTimeout(() => setZoomAlert(null), 4000);
+      } else if (z <= 2) {
+        setZoomAlert('Min zoom level (2) reached.');
+        setTimeout(() => setZoomAlert(null), 4000);
+      }
+    };
+    map.on('zoomend', onZoomEnd);
+    return () => {
+      map.off('zoomend', onZoomEnd);
+    };
+  }, []);
+
   return (
     <div className={`relative w-full h-[620px] rounded-xl overflow-hidden border border-slate-800 ${className}`}>
       <div ref={mapContainerRef} className="w-full h-full z-0" />
@@ -190,6 +214,14 @@ export const LeafletTacticalMap: React.FC<LeafletTacticalMapProps> = ({
         <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
         <span>Open Cartography Mode (Keyless Leaflet Engine)</span>
       </div>
+
+      {/* Non-blocking Zoom Boundary Alert Banner */}
+      {zoomAlert && (
+        <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-[1000] bg-cyan-950/95 border border-cyan-500/50 text-cyan-200 px-3 py-1.5 rounded-lg shadow-xl text-xs font-mono flex items-center gap-2 backdrop-blur pointer-events-none">
+          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+          <span>{zoomAlert}</span>
+        </div>
+      )}
     </div>
   );
 };

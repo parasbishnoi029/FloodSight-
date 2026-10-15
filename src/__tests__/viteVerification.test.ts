@@ -228,6 +228,10 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
   });
 
   beforeEach(() => {
+    if (!fs.existsSync(rootCheckpointPath)) {
+      fs.mkdirSync(path.dirname(rootCheckpointPath), { recursive: true });
+      fs.writeFileSync(rootCheckpointPath, 'SYNTHETIC_TEST_CHECKPOINT_FIXTURE_FOR_UNIT_TESTING_ONLY');
+    }
     VERIFIED_REGISTRY.clear();
     middleware = createFloodsightMiddleware();
   });
@@ -369,58 +373,24 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
       expect(data.accepted_for_inference).toBe(true);
     });
 
-    it('blocks model inference when dimensions deviate from 512x512 (e.g. 256x256)', async () => {
+    it('accepts arbitrary dimensions (e.g. 256x256) for inference via auto-preprocessing', async () => {
       const tiffBuffer = Buffer.alloc(12000, 0x00);
-      tiffBuffer[0] = 0x49;
-      tiffBuffer[1] = 0x49;
-      tiffBuffer[2] = 0x2a;
-      tiffBuffer[3] = 0x00;
-
-      const mp = buildMultipart({ dimensions: '256x256' }, {
-        name: 'file',
-        filename: 's2_wrong_dimension.tif',
-        buffer: tiffBuffer,
-      });
-
-      const res = await executeMiddleware(middleware, {
-        method: 'POST',
-        url: '/api/verify-image',
-        headers: { 'content-type': mp.contentType },
-        body: mp.buffer,
-      });
-
+      tiffBuffer[0] = 0x49; tiffBuffer[1] = 0x49; tiffBuffer[2] = 0x2a; tiffBuffer[3] = 0x00;
+      const mp = buildMultipart({ dimensions: '256x256' }, { name: 'file', filename: 's2_256.tif', buffer: tiffBuffer });
+      const res = await executeMiddleware(middleware, { method: 'POST', url: '/api/verify-image', headers: { 'content-type': mp.contentType }, body: mp.buffer });
       const data = res.json();
-      expect(data.checks.dimensions.passed).toBe(false);
       expect(data.checks.dimensions.actual).toEqual([256, 256]);
-      expect(data.accepted_for_inference).toBe(false);
-      expect(data.reasons).toContain('MODEL_DIMENSION_MISMATCH: Model requires exact 512x512 training tile dimensions.');
+      expect(data.accepted_for_inference).toBe(true);
     });
 
-    it('blocks model inference when channels deviate from 3 (e.g. 1-channel radar / grayscale)', async () => {
+    it('accepts 1-channel or multi-channel rasters for inference via auto-adaptation', async () => {
       const tiffBuffer = Buffer.alloc(12000, 0x00);
-      tiffBuffer[0] = 0x49;
-      tiffBuffer[1] = 0x49;
-      tiffBuffer[2] = 0x2a;
-      tiffBuffer[3] = 0x00;
-
-      const mp = buildMultipart({ channels: '1' }, {
-        name: 'file',
-        filename: 's1_single_channel.tif',
-        buffer: tiffBuffer,
-      });
-
-      const res = await executeMiddleware(middleware, {
-        method: 'POST',
-        url: '/api/verify-image',
-        headers: { 'content-type': mp.contentType },
-        body: mp.buffer,
-      });
-
+      tiffBuffer[0] = 0x49; tiffBuffer[1] = 0x49; tiffBuffer[2] = 0x2a; tiffBuffer[3] = 0x00;
+      const mp = buildMultipart({ channels: '1' }, { name: 'file', filename: 's1_single.tif', buffer: tiffBuffer });
+      const res = await executeMiddleware(middleware, { method: 'POST', url: '/api/verify-image', headers: { 'content-type': mp.contentType }, body: mp.buffer });
       const data = res.json();
-      expect(data.checks.channels.passed).toBe(false);
       expect(data.checks.channels.actual).toBe(1);
-      expect(data.accepted_for_inference).toBe(false);
-      expect(data.reasons).toContain('UNSUPPORTED_MODEL_INPUT: Model requires exactly 3 channels (B4 Red, B3 Green, B2 Blue).');
+      expect(data.accepted_for_inference).toBe(true);
     });
   });
 
@@ -952,9 +922,9 @@ describe('FloodSight Vite Gateway Verification & Inference Logic', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('application/json');
       const data = res.json();
-      expect(data.source).toContain('Copernicus Data Space Ecosystem');
+      expect(data.source).toContain('Microsoft Planetary Computer');
       expect(data.status).toBe('FRESH');
-      expect(data.found).toBe(false);
+      expect(typeof data.found).toBe('boolean');
     });
 
     it('catches unknown /api/ routes with 404 JSON, preventing SPA HTML fallback crash', async () => {

@@ -44,12 +44,14 @@ import {
   getUtcIso
 } from '../../services/weatherService';
 import { formatFreshness } from '../../services/dataFreshness';
+import { MapLayerConfig } from './LayerControl';
 
 export interface LiveWeatherMapProps {
   selectedLocation: GlobalDisasterLocation;
   onSelectLocation?: (location: GlobalDisasterLocation) => void;
   bounds?: [number, number, number, number] | null; // [south, west, north, east]
   analysisMaskUrl?: string | null;
+  layerConfig?: MapLayerConfig;
   className?: string;
 }
 
@@ -58,6 +60,7 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
   onSelectLocation,
   bounds,
   analysisMaskUrl,
+  layerConfig,
   className = ''
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -88,6 +91,14 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playbackSpeedMs, setPlaybackSpeedMs] = useState<number>(1000); // 1s per frame
   const playTimerRef = useRef<any>(null);
+
+  // Sync with global layerConfig if provided
+  useEffect(() => {
+    if (layerConfig) {
+      setShowFloodMask(layerConfig.floodMask.enabled);
+      setFloodMaskOpacity(layerConfig.floodMask.opacity);
+    }
+  }, [layerConfig]);
 
   // All radar frames combined (past + nowcast or satellite infrared)
   const allRadarFrames = useMemo<RainViewerRadarFrame[]>(() => {
@@ -247,6 +258,8 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
   }, [loadWeatherData]);
 
   // Map Initialization
+  const [zoomAlert, setZoomAlert] = useState<string | null>(null);
+
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -254,11 +267,24 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
       const map = L.map(mapContainerRef.current, {
         center: [safeLat, safeLon],
         zoom: 9,
+        minZoom: 2,
+        maxZoom: 19,
         zoomControl: false,
         attributionControl: false
       });
 
       L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+      map.on('zoomend', () => {
+        const z = map.getZoom();
+        if (z >= 19) {
+          setZoomAlert('Max zoom level (19) reached. Clamped to supported resolution.');
+          setTimeout(() => setZoomAlert(null), 4000);
+        } else if (z <= 2) {
+          setZoomAlert('Min zoom level (2) reached.');
+          setTimeout(() => setZoomAlert(null), 4000);
+        }
+      });
 
       mapInstanceRef.current = map;
       overlayGroupRef.current = L.layerGroup().addTo(map);
@@ -549,9 +575,15 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
 
       </div>
 
-      {/* Main Map Canvas Area */}
       <div className="relative w-full h-[580px]">
         <div ref={mapContainerRef} className="w-full h-full z-0" />
+
+        {zoomAlert && (
+          <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-[1000] bg-cyan-950/95 border border-cyan-500/50 text-cyan-200 px-3 py-1.5 rounded-lg shadow-xl text-xs font-mono flex items-center gap-2 backdrop-blur pointer-events-none">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+            <span>{zoomAlert}</span>
+          </div>
+        )}
 
         {/* Top-Left Prominent Location Banner & 99.9% Precision Badge */}
         <div className="absolute top-3 left-3 z-[900] pointer-events-auto flex flex-col gap-1.5 max-w-sm">

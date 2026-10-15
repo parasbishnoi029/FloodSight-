@@ -382,15 +382,15 @@ export const TopographicTerrain3D: React.FC<TopographicTerrain3DProps> = ({
       const maxM = currentDem.maxM ?? 100;
       const rangeM = Math.max(1, maxM - minM);
 
-      for (let r = 0; r < gridRes; r++) {
-        const demR = (r / (gridRes - 1)) * (demDim - 1);
+      for (let r = 0; r <= gridRes; r++) {
+        const demR = ((gridRes - r) / gridRes) * (demDim - 1);
         const r0 = Math.floor(demR);
         const r1 = Math.min(demDim - 1, r0 + 1);
         const rFrac = demR - r0;
 
-        for (let c = 0; c < gridRes; c++) {
+        for (let c = 0; c <= gridRes; c++) {
           const idx = r * (gridRes + 1) + c;
-          const demC = (c / (gridRes - 1)) * (demDim - 1);
+          const demC = (c / gridRes) * (demDim - 1);
           const c0 = Math.floor(demC);
           const c1 = Math.min(demDim - 1, c0 + 1);
           const cFrac = demC - c0;

@@ -240,7 +240,81 @@ export interface SatelliteCatalogProduct {
   status: 'FRESH' | 'STALE DATA' | 'SOURCE UNAVAILABLE';
   cache_age_seconds?: number;
   provenance_verified?: boolean;
+  preview_url?: string | null;
+  assets?: Record<string, any>;
+  has_model_bands?: boolean;
+  attribution?: string;
   error_message?: string;
+}
+
+export interface PlanetaryComputerStacAsset {
+  href: string;
+  title?: string;
+  type?: string;
+  gsd?: number;
+}
+
+export interface PlanetaryComputerStacItem {
+  id: string;
+  collection: string;
+  acquisition_timestamp: string;
+  platform: string;
+  cloud_cover_percent: number | null;
+  mgrs_tile?: string | null;
+  epsg?: number | null;
+  bbox?: number[];
+  geometry?: any;
+  assets: {
+    B02?: PlanetaryComputerStacAsset | null;
+    B03?: PlanetaryComputerStacAsset | null;
+    B04?: PlanetaryComputerStacAsset | null;
+    visual?: PlanetaryComputerStacAsset | null;
+    rendered_preview?: PlanetaryComputerStacAsset | null;
+  };
+  preview_url: string | null;
+  has_model_bands: boolean;
+  attribution: string;
+}
+
+export interface StacSearchResponse {
+  status: 'SUCCESS' | 'SOURCE_UNAVAILABLE';
+  source: string;
+  attribution: string;
+  retrieval_timestamp: string;
+  count: number;
+  features: PlanetaryComputerStacItem[];
+  message?: string;
+}
+
+export interface StacValidationResponse {
+  status: 'COMPATIBLE' | 'INCOMPATIBLE';
+  item_id: string;
+  checks: {
+    has_b02: boolean;
+    has_b03: boolean;
+    has_b04: boolean;
+    crs_valid: boolean;
+    geotransform_valid: boolean;
+    gsd_10m: boolean;
+    model_contract_compatible: boolean;
+  };
+  missing_bands: string[];
+  model_requirements: {
+    architecture: string;
+    required_channels: number;
+    channel_order: string[];
+    spatial_tiling: string;
+    expected_resolution: string;
+    scaling: string;
+    zero_fabrication_rule: string;
+  };
+  spatial_parameters: {
+    epsg: number | null;
+    transform: number[] | null;
+    shape: number[] | null;
+    bbox: number[] | null;
+  };
+  message: string;
 }
 
 export interface AnalysisSubmissionResponse {

@@ -129,7 +129,8 @@ const MapController: React.FC<{
   onProfileResult: (profile: PathElevationPoint[]) => void;
   isInspecting: boolean;
   activeAnalysis?: (FloodAnalysisResult | AnalysisSummary) | null;
-}> = ({ selectedLocation, onProbeResult, onProfileResult, isInspecting, activeAnalysis }) => {
+  onZoomAlert?: (msg: string | null) => void;
+}> = ({ selectedLocation, onProbeResult, onProfileResult, isInspecting, activeAnalysis, onZoomAlert }) => {
   const map = useMap();
   const elevationLib = useMapsLibrary('elevation');
   const [elevationService, setElevationService] = useState<google.maps.ElevationService | null>(null);
@@ -140,6 +141,32 @@ const MapController: React.FC<{
       setElevationService(new elevationLib.ElevationService());
     }
   }, [elevationLib]);
+
+  // Zoom clamping listener
+  useEffect(() => {
+    if (!map) return;
+    const listener = map.addListener('zoom_changed', () => {
+      const z = map.getZoom();
+      if (z !== undefined) {
+        if (z > 19) {
+          map.setZoom(19);
+          if (onZoomAlert) {
+            onZoomAlert('Max zoom level (19) reached. Clamped to supported bounds.');
+            setTimeout(() => onZoomAlert(null), 4000);
+          }
+        } else if (z < 2) {
+          map.setZoom(2);
+          if (onZoomAlert) {
+            onZoomAlert('Min zoom level (2) reached.');
+            setTimeout(() => onZoomAlert(null), 4000);
+          }
+        }
+      }
+    });
+    return () => {
+      google.maps.event.removeListener(listener);
+    };
+  }, [map, onZoomAlert]);
 
   // Pan to selected location or fit analyzed bounds
   useEffect(() => {
@@ -271,6 +298,7 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
   const [elevationProbe, setElevationProbe] = useState<ElevationProbe | null>(null);
   const [crossSectionProfile, setCrossSectionProfile] = useState<PathElevationPoint[]>([]);
   const [isLayerControlFloatingOpen, setIsLayerControlFloatingOpen] = useState<boolean>(true);
+  const [zoomAlert, setZoomAlert] = useState<string | null>(null);
 
   // Compute hydrographically modeled tactical overlays for active disaster
   const overlays = useMemo<DisasterTacticalOverlays>(() => {
@@ -477,6 +505,8 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
           <Map
             defaultCenter={{ lat: selectedLocation.lat, lng: selectedLocation.lon }}
             defaultZoom={7}
+            minZoom={2}
+            maxZoom={19}
             mapId="DEMO_MAP_ID"
             mapTypeId={mapTypeId}
             internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
@@ -490,7 +520,15 @@ export const GoogleRealtimeMap: React.FC<GoogleRealtimeMapProps> = ({
               onProfileResult={setCrossSectionProfile}
               isInspecting={true}
               activeAnalysis={activeAnalysis}
+              onZoomAlert={setZoomAlert}
             />
+
+        {zoomAlert && (
+          <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-50 bg-cyan-950/95 border border-cyan-500/50 text-cyan-200 px-3 py-1.5 rounded-lg shadow-xl text-xs font-mono flex items-center gap-2 backdrop-blur pointer-events-none">
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+            <span>{zoomAlert}</span>
+          </div>
+        )}
 
             {/* ========================================================================= */}
             {/* LAYER 2: FLOOD INUNDATION MASKS (GROUND OVERLAY & SPATIAL ZONES)          */}

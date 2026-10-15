@@ -24,12 +24,14 @@ import {
   Navigation,
   ArrowRight
 } from 'lucide-react';
-import { GlobalDisasterLocation } from '../../data/globalDisasters';
+import { GLOBAL_DISASTERS, GlobalDisasterLocation } from '../../data/globalDisasters';
 import { AnalysisSummary } from '../../types';
+import { MapLayerConfig } from './LayerControl';
 
 export interface SideBySideCompareViewProps {
   selectedLocation: GlobalDisasterLocation;
   activeAnalysis?: AnalysisSummary | null;
+  layerConfig?: MapLayerConfig;
   className?: string;
 }
 
@@ -53,7 +55,7 @@ const BASEMAP_TILES = {
     url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     attribution: '&copy; Esri &mdash; High-Resolution Earth Observation',
     maxZoom: 19,
-    maxNativeZoom: 17
+    maxNativeZoom: 15
   },
   roadmap: {
     name: 'OpenStreetMap',
@@ -72,6 +74,7 @@ const BASEMAP_TILES = {
 export const SideBySideCompareView: React.FC<SideBySideCompareViewProps> = ({
   selectedLocation,
   activeAnalysis,
+  layerConfig,
   className = ''
 }) => {
   // View mode: 'dual-pane' (side-by-side) vs 'swipe-slider' (split curtain)
@@ -86,9 +89,20 @@ export const SideBySideCompareView: React.FC<SideBySideCompareViewProps> = ({
 
   // Overlays & visualization toggles
   const [showDifferenceHighlight, setShowDifferenceHighlight] = useState<boolean>(true);
+  const [showFloodMask, setShowFloodMask] = useState<boolean>(true);
   const [floodMaskOpacity, setFloodMaskOpacity] = useState<number>(0.85);
   const [showRoadVectors, setShowRoadVectors] = useState<boolean>(true);
   const [showConfidenceHeatmap, setShowConfidenceHeatmap] = useState<boolean>(false);
+
+  // Sync with global layerConfig if provided
+  useEffect(() => {
+    if (layerConfig) {
+      setShowFloodMask(layerConfig.floodMask.enabled);
+      setFloodMaskOpacity(layerConfig.floodMask.opacity);
+      setShowRoadVectors(layerConfig.emergencyRoutes.enabled);
+      setShowConfidenceHeatmap(layerConfig.confidenceHeatmap.enabled);
+    }
+  }, [layerConfig]);
 
   // Available epochs generated for the active location
   const availableEpochs: CaptureEpoch[] = useMemo(() => {

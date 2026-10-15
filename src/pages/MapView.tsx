@@ -26,15 +26,23 @@ import {
   CloudRain,
   CheckCircle2,
   RotateCcw,
-  X
+  X,
+  Radio,
+  FileText,
+  Users
 } from 'lucide-react';
 import { GLOBAL_DISASTERS, GlobalDisasterLocation } from '../data/globalDisasters';
 import { ExtrudedFloodTerrainR3F } from '../components/3d/ExtrudedFloodTerrainR3F';
 import { GoogleRealtimeMap } from '../components/map/GoogleRealtimeMap';
 import { LiveWeatherMap } from '../components/map/LiveWeatherMap';
 import { SideBySideCompareView } from '../components/map/SideBySideCompareView';
-import { MapLayerConfig, DEFAULT_LAYER_CONFIG } from '../components/map/LayerControl';
+import { LayerControl, MapLayerConfig, DEFAULT_LAYER_CONFIG } from '../components/map/LayerControl';
 import { AnalysisSummary } from '../types';
+import { CitizenSosReport, INITIAL_SOS_REPORTS } from '../services/citizenSosService';
+import { calculateSocioImpact } from '../services/socioImpactService';
+import { CitizenSosFeed } from '../components/map/CitizenSosFeed';
+import { Ics209SitrepModal } from '../components/modals/Ics209SitrepModal';
+import { EvacuationRoutingPanel } from '../components/map/EvacuationRoutingPanel';
 
 export interface MapViewProps {
   activeAnalysis?: AnalysisSummary | null;
@@ -50,6 +58,11 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [severityFilter, setSeverityFilter] = useState<string>('All');
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+  const [isDetailedLayerControlOpen, setIsDetailedLayerControlOpen] = useState<boolean>(false);
+  const [sosReports, setSosReports] = useState<CitizenSosReport[]>(INITIAL_SOS_REPORTS);
+  const [isSosOpen, setIsSosOpen] = useState<boolean>(false);
+  const [isSitrepModalOpen, setIsSitrepModalOpen] = useState<boolean>(false);
+  const [isEvacuationPanelOpen, setIsEvacuationPanelOpen] = useState<boolean>(false);
 
   React.useEffect(() => {
     if (activeAnalysis) {
@@ -257,7 +270,6 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
             )}
           </button>
 
-          {/* Toggle Emergency Route Overlays */}
           <button
             type="button"
             onClick={() => toggleLayer('emergencyRoutes')}
@@ -269,12 +281,29 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
             title="Toggle Emergency Evacuation Routes Layer"
           >
             <Navigation className="w-3.5 h-3.5" />
-            <span>Emergency Routes</span>
+            <span className="hidden xl:inline">Roads</span>
             {layerConfig.emergencyRoutes.enabled ? (
               <Eye className="w-3 h-3 text-emerald-400" />
             ) : (
               <EyeOff className="w-3 h-3 text-slate-600" />
             )}
+          </button>
+
+          <div className="w-px h-4 bg-slate-800 mx-1 hidden sm:block" />
+
+          {/* Detailed Layer Control Panel Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsDetailedLayerControlOpen(!isDetailedLayerControlOpen)}
+            className={`p-1.5 rounded-lg transition-all flex items-center gap-1 cursor-pointer ${
+              isDetailedLayerControlOpen
+                ? 'bg-cyan-500 text-slate-950'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'
+            }`}
+            title="Detailed Layer Settings (Opacity, Mode, etc.)"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span className="text-[10px] font-bold uppercase hidden md:inline">Settings</span>
           </button>
         </div>
 
@@ -342,6 +371,43 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
             <Globe className="w-3.5 h-3.5 text-cyan-400" />
             <span className="hidden sm:inline">Catalog ({filteredDisasters.length})</span>
           </button>
+
+          {/* Citizen SOS Feed Button */}
+          <button
+            onClick={() => setIsSosOpen(!isSosOpen)}
+            className="px-3 py-2 text-xs font-mono rounded-xl bg-red-950/60 hover:bg-red-950 border border-red-500/40 text-red-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(239,68,68,0.2)]"
+            title="Open Citizen SOS & Ground-Truth Ingestion Feed"
+          >
+            <Radio className="w-3.5 h-3.5 text-red-400 animate-pulse" />
+            <span className="hidden md:inline">SOS Feed</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-red-600 text-[10px] font-bold text-white">
+              {sosReports.length}
+            </span>
+          </button>
+
+          {/* Broadcast ICS-209 SITREP Button */}
+          <button
+            onClick={() => setIsSitrepModalOpen(true)}
+            className="px-3 py-2 text-xs font-mono rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(6,182,212,0.4)]"
+            title="Generate and Dispatch ICS-209 Federal Situation Report"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Broadcast SITREP</span>
+          </button>
+
+          {/* AI Evacuation & Velocity Hub Button */}
+          <button
+            onClick={() => setIsEvacuationPanelOpen(!isEvacuationPanelOpen)}
+            className={`px-3 py-2 text-xs font-mono rounded-xl border transition-all flex items-center gap-1.5 cursor-pointer ${
+              isEvacuationPanelOpen
+                ? 'bg-emerald-950 border-emerald-500/50 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white hover:border-emerald-500/30'
+            }`}
+            title="Open AI Evacuation Routing & Flood Velocity Delta Hub"
+          >
+            <Navigation className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+            <span className="hidden md:inline">Evac & Velocity</span>
+          </button>
         </div>
 
       </div>
@@ -387,6 +453,7 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
                   : null
               }
               analysisMaskUrl={activeAnalysis?.mask_png_data_url || activeAnalysis?.overlay_data_url || null}
+              layerConfig={layerConfig}
               onSelectLocation={handleSelectLocation}
               className="w-full"
             />
@@ -408,6 +475,7 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
               extrusionScale={2.0}
               analysisResult={activeAnalysis || null}
               rasterPreviewUrl={activeAnalysis?.raster_preview_data_url}
+              layerConfig={layerConfig}
               coordinates={
                 activeAnalysis && activeAnalysis.origin_lat != null && activeAnalysis.origin_lon != null
                   ? { lat: activeAnalysis.origin_lat, lon: activeAnalysis.origin_lon }
@@ -423,10 +491,30 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
               key={`side-by-side-${selectedHotspot.id}`}
               selectedLocation={selectedHotspot}
               activeAnalysis={activeAnalysis}
+              layerConfig={layerConfig}
               className="w-full"
             />
           )}
         </div>
+
+        {/* Detailed Layer Control Floating Panel */}
+        {isDetailedLayerControlOpen && (
+          <div className="absolute top-4 right-4 z-30 w-80 animate-in fade-in slide-in-from-top-4 duration-300">
+            <div className="relative">
+              <button 
+                onClick={() => setIsDetailedLayerControlOpen(false)}
+                className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-slate-900 border border-slate-700 text-slate-400 hover:text-white flex items-center justify-center z-40 shadow-xl cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+              <LayerControl
+                layers={layerConfig}
+                onChange={setLayerConfig}
+                inundationHectares={activeAnalysis?.physical_area_ha ?? selectedHotspot.estimatedInundationHa}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Global Disaster Catalog Slide-Over Drawer & Overlay Backdrop */}
         {isSidebarOpen && (
@@ -565,6 +653,41 @@ export const MapView: React.FC<MapViewProps> = ({ activeAnalysis, onClearAnalysi
 
       </div>
 
+      {/* Citizen SOS Feed Slide-out Drawer */}
+      <CitizenSosFeed
+        reports={sosReports}
+        onAddReport={(rep) => setSosReports([rep, ...sosReports])}
+        isOpen={isSosOpen}
+        onClose={() => setIsSosOpen(false)}
+      />
+
+      {/* ICS-209 Federal Situation Report Modal */}
+      <Ics209SitrepModal
+        isOpen={isSitrepModalOpen}
+        onClose={() => setIsSitrepModalOpen(false)}
+        sitrepData={{
+          incidentName: activeAnalysis ? activeAnalysis.filename : `${selectedHotspot.country} - ${selectedHotspot.name} Flood`,
+          timestamp: new Date().toUTCString(),
+          commander: 'Incident Commander (FEMA Region IV / SEOC)',
+          waterStageMeters: 1.2,
+          floodedAreaSqKm: activeAnalysis?.physical_area_ha ? activeAnalysis.physical_area_ha / 100 : selectedHotspot.estimatedInundationHa / 100,
+          socioImpact: calculateSocioImpact(selectedHotspot.lat, selectedHotspot.lon, 1.2),
+          sosReports,
+          weatherSummary: 'Active convective precipitation cell (RainViewer Doppler 3.2mm/h)',
+          confidenceScore: activeAnalysis?.confidence_mean ? Math.round(activeAnalysis.confidence_mean * 100) : 94,
+          evacuationRoutesCount: 4
+        }}
+      />
+
+      {/* AI Evacuation Routing & Flood Velocity Delta Panel */}
+      {isEvacuationPanelOpen && (
+        <EvacuationRoutingPanel
+          waterStageMeters={1.2}
+          onClose={() => setIsEvacuationPanelOpen(false)}
+        />
+      )}
+
     </motion.div>
   );
 };
+
