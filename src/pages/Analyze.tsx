@@ -5,7 +5,8 @@ import {
   VerificationResponse, 
   FloodAnalysisResult, 
   NavigationTab,
-  HealthStatus
+  HealthStatus,
+  AnalysisSummary
 } from '../types';
 import { calculateHectares, isValidGeospatial, generateFloodGeoJson } from '../utils/geospatial';
 import { SensorSwathScanner3D, ExtrudedFloodTerrainR3F } from '../components/3d';
@@ -37,12 +38,13 @@ import {
 } from 'lucide-react';
 
 interface AnalyzeProps {
-  onAnalyzeSuccess?: (result: FloodAnalysisResult, file: File) => void;
+  onAnalyzeSuccess?: (result: FloodAnalysisResult, file?: File) => void;
   onNavigate: (tab: NavigationTab) => void;
   health?: HealthStatus | null;
+  activeAnalysis?: AnalysisSummary | null;
 }
 
-export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, health }) => {
+export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, health, activeAnalysis }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -57,6 +59,13 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
   const [analysisResult, setAnalysisResult] = useState<FloodAnalysisResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [osmInfra, setOsmInfra] = useState<any | null>(null);
+  const [userHasSelectedFile, setUserHasSelectedFile] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (activeAnalysis && !analysisResult && !userHasSelectedFile && !selectedFile) {
+      setAnalysisResult(activeAnalysis as unknown as FloodAnalysisResult);
+    }
+  }, [activeAnalysis, analysisResult, userHasSelectedFile, selectedFile]);
 
   React.useEffect(() => {
     if (!analysisResult) return;
@@ -116,7 +125,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
       area_calculation_method: analysisResult.area_calculation_method || 'WGS84_ROW_INTEGRATED_ELLIPSOIDAL'
     };
 
-    const geojson = generateFloodGeoJson(zones, geoMeta, provenance);
+    const geojson = analysisResult.geojson || generateFloodGeoJson(zones, geoMeta, provenance);
     const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -137,6 +146,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
     : GLOBAL_DISASTERS.filter((d) => d.continent === selectedContinent);
 
   const handleFileSelect = (file: File) => {
+    setUserHasSelectedFile(true);
     setErrorMsg(null);
     setVerificationResult(null);
     setAnalysisResult(null);
@@ -161,6 +171,7 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
 
   const handleRemoveFile = () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setUserHasSelectedFile(true);
     setSelectedFile(null);
     setPreviewUrl(null);
     setVerificationResult(null);
@@ -487,14 +498,14 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
               </div>
 
               {/* Warning Notice for Unreferenced Images */}
-              {verificationResult.warnings.length > 0 && (
+              {Boolean(verificationResult.warnings && verificationResult.warnings.length > 0) && (
                 <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200/90 space-y-1">
                   <div className="flex items-center gap-1.5 font-bold">
                     <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
                     <span>Provenance Warning:</span>
                   </div>
                   <p className="text-[11px] leading-relaxed">
-                    {verificationResult.warnings[0]}
+                    {verificationResult.warnings?.[0]}
                   </p>
                 </div>
               )}
@@ -800,7 +811,12 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
                 </button>
 
                 <button
-                  onClick={() => onNavigate('map')}
+                  onClick={() => {
+                    if (analysisResult) {
+                      onAnalyzeSuccess?.(analysisResult, selectedFile || undefined);
+                    }
+                    onNavigate('map');
+                  }}
                   className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-mono font-semibold rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 transition-colors cursor-pointer"
                 >
                   <Mountain className="w-3.5 h-3.5" />
@@ -833,11 +849,17 @@ export const Analyze: React.FC<AnalyzeProps> = ({ onAnalyzeSuccess, onNavigate, 
           </div>
 
           <ExtrudedFloodTerrainR3F
-            selectedLocation={analysisResult.filename}
+            key={analysisResult.analysis_id}
+            selectedLocation={
+              analysisResult.origin_lat != null && analysisResult.origin_lon != null
+                ? `${analysisResult.filename} (${analysisResult.origin_lat >= 0 ? analysisResult.origin_lat.toFixed(3) + '°N' : Math.abs(analysisResult.origin_lat).toFixed(3) + '°S'}, ${analysisResult.origin_lon >= 0 ? analysisResult.origin_lon.toFixed(3) + '°E' : Math.abs(analysisResult.origin_lon).toFixed(3) + '°W'})`
+                : analysisResult.filename
+            }
             floodCoveragePercent={analysisResult.coverage_percent}
-            initialWaterLevel={Math.min(0.85, Math.max(0.2, analysisResult.coverage_percent / 50))}
-            extrusionScale={2.2}
+            initialWaterLevel={0.2}
+            extrusionScale={2.0}
             analysisResult={analysisResult}
+            rasterPreviewUrl={analysisResult.raster_preview_data_url}
           />
         </section>
       )}

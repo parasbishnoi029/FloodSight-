@@ -18,6 +18,10 @@ import {
   RefreshCw,
   Info,
   AlertCircle,
+  AlertTriangle,
+  CloudLightning,
+  Cloud,
+  Gauge,
   Activity,
   Compass,
   Satellite,
@@ -77,6 +81,7 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
   const [showForecast, setShowForecast] = useState<boolean>(true);
   const [basemapStyle, setBasemapStyle] = useState<'dark' | 'satellite' | 'streets'>('dark');
   const [radarColorScheme, setRadarColorScheme] = useState<number>(2); // 2: Universal Blue, 1: RainViewer Classic, 8: Titan Spectrum
+  const [radarMode, setRadarMode] = useState<'precipitation' | 'cloud-satellite'>('precipitation');
 
   // Radar Timeline & Playback
   const [activeFrameIndex, setActiveFrameIndex] = useState<number>(0);
@@ -84,16 +89,118 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
   const [playbackSpeedMs, setPlaybackSpeedMs] = useState<number>(1000); // 1s per frame
   const playTimerRef = useRef<any>(null);
 
-  // All radar frames combined (past + nowcast)
+  // All radar frames combined (past + nowcast or satellite infrared)
   const allRadarFrames = useMemo<RainViewerRadarFrame[]>(() => {
     if (!weatherData?.rainViewer) return [];
+    if (radarMode === 'cloud-satellite' && weatherData.rainViewer.satelliteFrames && weatherData.rainViewer.satelliteFrames.length > 0) {
+      return weatherData.rainViewer.satelliteFrames;
+    }
     return [
       ...(weatherData.rainViewer.frames || []),
       ...(weatherData.rainViewer.nowcastFrames || [])
     ];
-  }, [weatherData]);
+  }, [weatherData, radarMode]);
 
-  const pastFramesCount = weatherData?.rainViewer?.frames?.length || 0;
+  const pastFramesCount = useMemo(() => {
+    if (radarMode === 'cloud-satellite') {
+      return weatherData?.rainViewer?.satelliteFrames?.length || 0;
+    }
+    return weatherData?.rainViewer?.frames?.length || 0;
+  }, [weatherData, radarMode]);
+
+  // Deterministic Storm Risk Intelligence Assessment
+  const stormRiskAssessment = useMemo(() => {
+    const current = weatherData?.currentWeather;
+    if (!current) {
+      return {
+        level: 'LOW' as const,
+        score: 1,
+        color: 'emerald',
+        badge: 'NOMINAL / LOW RISK',
+        description: 'Atmospheric conditions within baseline thresholds.',
+        alerts: [] as string[]
+      };
+    }
+
+    const precip = current.precipitation || 0;
+    const gusts = current.wind_gusts_10m || current.wind_speed_10m || 0;
+    const code = current.weather_code;
+    const alerts: string[] = [];
+
+    let score = 1;
+
+    // Severe thunderstorm & convective codes
+    if ([95, 96, 99].includes(code)) {
+      score = Math.max(score, code === 99 || code === 96 ? 5 : 4);
+      alerts.push(`Active convective thunderstorm cell detected (WMO Code ${code}).`);
+    } else if (code === 82) {
+      score = Math.max(score, 4);
+      alerts.push('Violent convective rain showers recorded over catchment basin.');
+    } else if ([65, 81].includes(code)) {
+      score = Math.max(score, 3);
+      alerts.push('Heavy sustained rainfall impacting local basin drainage capacity.');
+    }
+
+    // Precipitation intensity thresholds (mm/hr)
+    if (precip > 50) {
+      score = Math.max(score, 5);
+      alerts.push(`Torrential downpour (${precip.toFixed(1)} mm/hr) exceeding flashover threshold.`);
+    } else if (precip > 15) {
+      score = Math.max(score, 4);
+      alerts.push(`High precipitation intensity (${precip.toFixed(1)} mm/hr) accelerating flood accumulation.`);
+    } else if (precip > 5) {
+      score = Math.max(score, 3);
+      alerts.push(`Moderate rainfall (${precip.toFixed(1)} mm/hr) sustaining elevated river stage.`);
+    }
+
+    // Gale-force winds and gusts (km/h)
+    if (gusts > 75) {
+      score = Math.max(score, 5);
+      alerts.push(`Dangerous wind gusts (${gusts.toFixed(0)} km/h) elevating surge and debris hazard.`);
+    } else if (gusts > 50) {
+      score = Math.max(score, 3);
+      alerts.push(`Elevated wind gusts (${gusts.toFixed(0)} km/h) recorded.`);
+    }
+
+    if (score >= 5) {
+      return {
+        level: 'EXTREME' as const,
+        score,
+        color: 'rose',
+        badge: 'CRITICAL STORM ALERT',
+        description: 'Severe convective storm and torrential flash flood hazard active.',
+        alerts
+      };
+    }
+    if (score === 4) {
+      return {
+        level: 'HIGH' as const,
+        score,
+        color: 'rose',
+        badge: 'HIGH STORM RISK',
+        description: 'Heavy precipitation bands and convective cells detected in basin.',
+        alerts
+      };
+    }
+    if (score === 3) {
+      return {
+        level: 'MODERATE' as const,
+        score,
+        color: 'amber',
+        badge: 'MODERATE ADVISORY',
+        description: 'Moderate rain bands and gusty winds observed over region.',
+        alerts
+      };
+    }
+    return {
+      level: 'LOW' as const,
+      score,
+      color: 'emerald',
+      badge: 'NOMINAL / LOW RISK',
+      description: 'Precipitation and surface winds remain within nominal operating baseline.',
+      alerts
+    };
+  }, [weatherData?.currentWeather]);
 
   // Safeguard lat/lon coordinates
   const safeLat = useMemo(() => {
@@ -255,7 +362,8 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
     if (!frame) return;
 
     const host = weatherData.rainViewer.host || 'https://tilecache.rainviewer.com';
-    const tileUrlTemplate = getRainViewerTileUrl(host, frame.path, '{z}', '{x}', '{y}', radarColorScheme, 1, 1);
+    const effectiveColorScheme = radarMode === 'cloud-satellite' ? 0 : radarColorScheme;
+    const tileUrlTemplate = getRainViewerTileUrl(host, frame.path, '{z}', '{x}', '{y}', effectiveColorScheme, 1, 1);
 
     const radarLayer = L.tileLayer(tileUrlTemplate, {
       opacity: radarOpacity,
@@ -265,7 +373,7 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
     }).addTo(map);
 
     radarTileRef.current = radarLayer;
-  }, [showRadar, radarOpacity, radarColorScheme, weatherData, allRadarFrames, activeFrameIndex]);
+  }, [showRadar, radarOpacity, radarColorScheme, radarMode, weatherData, allRadarFrames, activeFrameIndex]);
 
   // Update Flood Mask & Location Markers
   useEffect(() => {
@@ -499,21 +607,50 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
               </div>
             </div>
 
-            {/* Layer 1: Precipitation Radar Toggle & Slider */}
-            <div className="space-y-1">
+            {/* Layer 1: Weather Radar & Cloud Satellite Toggle & Controls */}
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <button
                   onClick={() => setShowRadar(!showRadar)}
                   className="flex items-center gap-1.5 text-slate-200 hover:text-white font-bold cursor-pointer"
                 >
                   <CloudRain className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>RainViewer Radar</span>
+                  <span>Weather Radar</span>
                   {showRadar ? <Eye className="w-3 h-3 text-cyan-400" /> : <EyeOff className="w-3 h-3 text-slate-600" />}
                 </button>
                 <span className="text-[10px] text-slate-400">{Math.round(radarOpacity * 100)}%</span>
               </div>
+
               {showRadar && (
-                <div className="space-y-1">
+                <div className="space-y-1.5">
+                  {/* Radar Mode Switcher: Precipitation Radar vs Satellite Cloud Cover */}
+                  <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-slate-900 border border-slate-800 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setRadarMode('precipitation')}
+                      className={`py-1 px-1.5 rounded transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                        radarMode === 'precipitation'
+                          ? 'bg-cyan-500 text-slate-950 font-bold shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <CloudRain className="w-3 h-3" />
+                      Precipitation
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRadarMode('cloud-satellite')}
+                      className={`py-1 px-1.5 rounded transition-all flex items-center justify-center gap-1 cursor-pointer ${
+                        radarMode === 'cloud-satellite'
+                          ? 'bg-cyan-500 text-slate-950 font-bold shadow'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <Cloud className="w-3 h-3" />
+                      Cloud Radar
+                    </button>
+                  </div>
+
                   <input
                     type="range"
                     min="0.1"
@@ -523,18 +660,21 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
                     onChange={(e) => setRadarOpacity(parseFloat(e.target.value))}
                     className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
                   />
-                  <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
-                    <span>Palette:</span>
-                    <select
-                      value={radarColorScheme}
-                      onChange={(e) => setRadarColorScheme(parseInt(e.target.value, 10))}
-                      className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none focus:border-cyan-500 cursor-pointer"
-                    >
-                      <option value={2}>Universal Blue</option>
-                      <option value={1}>RainViewer Classic</option>
-                      <option value={8}>Titan Spectrum</option>
-                    </select>
-                  </div>
+
+                  {radarMode === 'precipitation' && (
+                    <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
+                      <span>Palette:</span>
+                      <select
+                        value={radarColorScheme}
+                        onChange={(e) => setRadarColorScheme(parseInt(e.target.value, 10))}
+                        className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-slate-300 focus:outline-none focus:border-cyan-500 cursor-pointer"
+                      >
+                        <option value={2}>Universal Blue</option>
+                        <option value={1}>RainViewer Classic</option>
+                        <option value={8}>Titan Spectrum</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -587,49 +727,187 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
 
           </div>
 
-          {/* Current Live Weather Observation Card */}
+          {/* Current Live Weather Observation & Precipitation Intensity Gauge Card */}
           {showWindInfo && weatherData?.currentWeather && (
-            <div className="rounded-xl bg-slate-950/95 border border-slate-800/90 backdrop-blur-md p-3 space-y-2 shadow-2xl font-mono text-xs text-slate-200">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+            <div className="rounded-xl bg-slate-950/95 border border-slate-800/90 backdrop-blur-md p-3 space-y-2.5 shadow-2xl font-mono text-xs text-slate-200">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
                 <span className="font-bold text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
-                  <Thermometer className="w-3.5 h-3.5 text-amber-400" />
-                  Open-Meteo Observation
+                  <Gauge className="w-3.5 h-3.5 text-cyan-400" />
+                  Precipitation & Storm Intel
                 </span>
-                <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">
-                  OBSERVED
+                <span className="text-[10px] text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800 font-bold">
+                  LIVE TELEMETRY
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                <div className="p-1.5 rounded bg-slate-900/80 border border-slate-800">
+              {/* Real-time Calibrated Precipitation Intensity Gauge */}
+              {(() => {
+                const precip = weatherData.currentWeather.precipitation || 0;
+                let gaugeLabel = 'None / Dry (0.0 mm/hr)';
+                let gaugeBadgeClass = 'bg-slate-900 text-slate-400 border-slate-700';
+
+                if (precip > 50) {
+                  gaugeLabel = 'TORRENTIAL (>50 mm/hr)';
+                  gaugeBadgeClass = 'bg-rose-950 text-rose-300 border-rose-500/90 animate-pulse font-bold';
+                } else if (precip > 10) {
+                  gaugeLabel = 'Heavy Rain (10-50 mm/hr)';
+                  gaugeBadgeClass = 'bg-amber-950 text-amber-300 border-amber-500/80 font-bold';
+                } else if (precip > 2) {
+                  gaugeLabel = 'Moderate Rain (2-10 mm/hr)';
+                  gaugeBadgeClass = 'bg-cyan-950 text-cyan-300 border-cyan-700';
+                } else if (precip > 0.05) {
+                  gaugeLabel = 'Light Rain (<2 mm/hr)';
+                  gaugeBadgeClass = 'bg-emerald-950 text-emerald-300 border-emerald-800';
+                }
+
+                // Needle percentage on calibrated 0 - 60+ mm scale
+                const needlePct = Math.min(
+                  98,
+                  Math.max(
+                    2,
+                    precip <= 2
+                      ? (precip / 2) * 25
+                      : precip <= 10
+                      ? 25 + ((precip - 2) / 8) * 25
+                      : precip <= 50
+                      ? 50 + ((precip - 10) / 40) * 25
+                      : 75 + Math.min(23, ((precip - 50) / 50) * 23)
+                  )
+                );
+
+                return (
+                  <div className="space-y-2">
+                    <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-400 uppercase font-semibold flex items-center gap-1">
+                          <Droplets className="w-3 h-3 text-cyan-400" />
+                          Precipitation Intensity Gauge
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded border text-[9px] ${gaugeBadgeClass}`}>
+                          {gaugeLabel}
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline justify-between pt-0.5">
+                        <span className="text-xl font-bold text-white tabular-nums tracking-tight">
+                          {precip.toFixed(1)} <span className="text-xs font-normal text-slate-400">{weatherData.currentUnits?.precipitation || 'mm/hr'}</span>
+                        </span>
+                        <span className="text-[10px] text-cyan-400 font-medium">
+                          {weatherDesc.label}
+                        </span>
+                      </div>
+
+                      {/* Calibrated Gauge Scale Bar with Needle */}
+                      <div className="space-y-1 pt-1">
+                        <div className="relative h-2 w-full rounded-full overflow-hidden flex bg-slate-950 border border-slate-800">
+                          <div className="h-full w-1/4 bg-emerald-500/70" title="0 - 2 mm/hr (Light)" />
+                          <div className="h-full w-1/4 bg-cyan-500" title="2 - 10 mm/hr (Moderate)" />
+                          <div className="h-full w-1/4 bg-amber-500" title="10 - 50 mm/hr (Heavy)" />
+                          <div className="h-full w-1/4 bg-rose-600" title="> 50 mm/hr (Torrential)" />
+                        </div>
+                        <div className="relative w-full h-1">
+                          <div
+                            className="absolute -top-3 w-2 h-3 bg-white border border-slate-900 rounded-sm shadow-md transition-all duration-300 -translate-x-1/2"
+                            style={{ left: `${needlePct}%` }}
+                            title={`Current Rate: ${precip.toFixed(1)} mm/hr`}
+                          />
+                        </div>
+                        <div className="flex justify-between text-[8px] text-slate-500 font-mono">
+                          <span>0</span>
+                          <span>2 mm/h</span>
+                          <span>10 mm/h</span>
+                          <span className="text-rose-400">&gt;50</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Deterministic Storm Risk Alert & Advisory Banner */}
+                    <div className={`p-2.5 rounded-lg border text-[10px] space-y-1.5 ${
+                      stormRiskAssessment.level === 'EXTREME'
+                        ? 'bg-rose-950/90 border-rose-500/80 text-rose-200 animate-pulse'
+                        : stormRiskAssessment.level === 'HIGH'
+                        ? 'bg-rose-950/70 border-rose-600/70 text-rose-200'
+                        : stormRiskAssessment.level === 'MODERATE'
+                        ? 'bg-amber-950/80 border-amber-600/70 text-amber-200'
+                        : 'bg-slate-900/80 border-slate-800 text-slate-300'
+                    }`}>
+                      <div className="flex items-center justify-between font-bold">
+                        <span className="flex items-center gap-1.5">
+                          {stormRiskAssessment.level === 'EXTREME' || stormRiskAssessment.level === 'HIGH' ? (
+                            <CloudLightning className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                          ) : stormRiskAssessment.level === 'MODERATE' ? (
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          ) : (
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          )}
+                          <span className="uppercase tracking-wider">{stormRiskAssessment.badge}</span>
+                        </span>
+                        <span className="text-[9px] opacity-80">Level {stormRiskAssessment.score}/5</span>
+                      </div>
+
+                      <p className="text-[9px] leading-relaxed opacity-90">
+                        {stormRiskAssessment.description}
+                      </p>
+
+                      {stormRiskAssessment.alerts.length > 0 && (
+                        <div className="pt-1 border-t border-slate-800/80 space-y-0.5">
+                          {stormRiskAssessment.alerts.map((alertText, idx) => (
+                            <div key={idx} className="flex items-start gap-1 text-[9px]">
+                              <span className="text-cyan-400 shrink-0">&bull;</span>
+                              <span>{alertText}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Atmospheric Observation Grid: Temp, Wind, Cloud Cover, Humidity */}
+              <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 space-y-0.5">
                   <span className="text-[9px] text-slate-400 block uppercase">Temperature</span>
-                  <span className="text-sm font-bold text-white">
+                  <span className="text-sm font-bold text-white tabular-nums">
                     {weatherData.currentWeather.temperature_2m} {weatherData.currentUnits?.temperature_2m || '°C'}
                   </span>
-                  <span className="text-[9px] text-slate-400 block">
-                    Feels like {weatherData.currentWeather.apparent_temperature} {weatherData.currentUnits?.apparent_temperature || '°C'}
+                  <span className="text-[9px] text-slate-400 block truncate">
+                    Feels {weatherData.currentWeather.apparent_temperature} {weatherData.currentUnits?.apparent_temperature || '°C'}
                   </span>
                 </div>
 
-                <div className="p-1.5 rounded bg-slate-900/80 border border-slate-800">
-                  <span className="text-[9px] text-slate-400 block uppercase">Wind Condition</span>
-                  <span className="text-sm font-bold text-cyan-300 flex items-center gap-1">
+                <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 space-y-0.5">
+                  <span className="text-[9px] text-slate-400 block uppercase">Wind & Gusts</span>
+                  <span className="text-sm font-bold text-cyan-300 flex items-center gap-1 tabular-nums">
                     <Wind className="w-3 h-3 text-cyan-400" />
                     {weatherData.currentWeather.wind_speed_10m} {weatherData.currentUnits?.wind_speed_10m || 'km/h'}
                   </span>
-                  <span className="text-[9px] text-slate-400 block">
-                    Direction: {windCompass} ({weatherData.currentWeather.wind_direction_10m}°)
+                  <span className="text-[9px] text-slate-400 block truncate">
+                    Gusts: {weatherData.currentWeather.wind_gusts_10m ?? weatherData.currentWeather.wind_speed_10m} km/h · {windCompass}
                   </span>
                 </div>
-              </div>
 
-              <div className="p-1.5 rounded bg-cyan-950/40 border border-cyan-900/60 flex items-center justify-between text-[11px]">
-                <span className="text-slate-300">{weatherDesc.label}</span>
-                <span className="font-bold text-cyan-300">
-                  {weatherData.currentWeather.precipitation > 0
-                    ? `${weatherData.currentWeather.precipitation} ${weatherData.currentUnits?.precipitation || 'mm'}`
-                    : 'No Surface Precip'}
-                </span>
+                <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 space-y-0.5">
+                  <span className="text-[9px] text-slate-400 block uppercase">Cloud Cover Deck</span>
+                  <span className="text-sm font-bold text-sky-300 flex items-center gap-1 tabular-nums">
+                    <Cloud className="w-3 h-3 text-sky-400" />
+                    {weatherData.currentWeather.cloud_cover ?? 'N/A'}%
+                  </span>
+                  <span className="text-[9px] text-slate-400 block truncate">
+                    {weatherData.currentWeather.cloud_cover > 75 ? 'Overcast deck' : weatherData.currentWeather.cloud_cover > 25 ? 'Partly cloudy' : 'Clear sky'}
+                  </span>
+                </div>
+
+                <div className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 space-y-0.5">
+                  <span className="text-[9px] text-slate-400 block uppercase">Rel. Humidity</span>
+                  <span className="text-sm font-bold text-indigo-300 flex items-center gap-1 tabular-nums">
+                    <Droplets className="w-3 h-3 text-indigo-400" />
+                    {weatherData.currentWeather.relative_humidity_2m ?? 'N/A'}%
+                  </span>
+                  <span className="text-[9px] text-slate-400 block truncate">
+                    Pres: {weatherData.currentWeather.surface_pressure ? `${Math.round(weatherData.currentWeather.surface_pressure)} hPa` : 'Nominal'}
+                  </span>
+                </div>
               </div>
             </div>
           )}
@@ -781,16 +1059,30 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
             </span>
 
             <span className={`font-bold px-1.5 py-0.5 rounded ${
-              isNowcastFrame
+              radarMode === 'cloud-satellite'
+                ? 'bg-sky-950 text-sky-300 border border-sky-800'
+                : isNowcastFrame
                 ? 'bg-amber-950 text-amber-300 border border-amber-800'
                 : 'bg-cyan-950 text-cyan-300 border border-cyan-800'
             }`}>
-              {isNowcastFrame ? 'SHORT-TERM NOWCAST' : 'RADAR OBSERVATION'}
+              {radarMode === 'cloud-satellite'
+                ? 'SATELLITE INFRARED CLOUD'
+                : isNowcastFrame
+                ? 'SHORT-TERM NOWCAST'
+                : 'RADAR OBSERVATION'}
             </span>
 
-            <span className="text-white font-bold">
-              {activeFrameIso ? activeFrameIso.slice(11, 16) + ' UTC' : 'N/A'}
-            </span>
+            <div className="flex items-center gap-2">
+              {weatherData?.currentWeather && (
+                <span className="text-[9px] text-sky-300 bg-sky-950/70 border border-sky-800/80 px-1.5 py-0.5 rounded flex items-center gap-1">
+                  <Cloud className="w-2.5 h-2.5" />
+                  {weatherData.currentWeather.cloud_cover ?? 0}%
+                </span>
+              )}
+              <span className="text-white font-bold">
+                {activeFrameIso ? activeFrameIso.slice(11, 16) + ' UTC' : 'N/A'}
+              </span>
+            </div>
           </div>
 
           <input
@@ -805,6 +1097,42 @@ export const LiveWeatherMap: React.FC<LiveWeatherMapProps> = ({
             disabled={allRadarFrames.length === 0}
             className="w-full h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800"
           />
+
+          {/* Quick Jump Timeline Markers */}
+          {allRadarFrames.length > 0 && (
+            <div className="flex items-center justify-between text-[9px] text-slate-400 pt-0.5">
+              <button
+                onClick={() => { setIsPlaying(false); setActiveFrameIndex(0); }}
+                className="hover:text-cyan-300 cursor-pointer"
+              >
+                -2h Past
+              </button>
+              <button
+                onClick={() => { setIsPlaying(false); setActiveFrameIndex(Math.floor(pastFramesCount / 2)); }}
+                className="hover:text-cyan-300 cursor-pointer"
+              >
+                -1h
+              </button>
+              <button
+                onClick={() => { setIsPlaying(false); setActiveFrameIndex(Math.max(0, pastFramesCount - 1)); }}
+                className="text-cyan-400 font-bold hover:text-white cursor-pointer"
+              >
+                ● Now
+              </button>
+              <button
+                onClick={() => { setIsPlaying(false); setActiveFrameIndex(Math.min(allRadarFrames.length - 1, pastFramesCount)); }}
+                className="hover:text-cyan-300 cursor-pointer"
+              >
+                +1h Forecast
+              </button>
+              <button
+                onClick={() => { setIsPlaying(false); setActiveFrameIndex(allRadarFrames.length - 1); }}
+                className="hover:text-cyan-300 cursor-pointer"
+              >
+                +2h
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Attribution & Disclosure Badge */}

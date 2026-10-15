@@ -176,11 +176,12 @@ export async function getLiveWeather(lat: number, lon: number): Promise<LiveWeat
       if (radarMeta && radarMeta.radar) {
         const pastFrames = radarMeta.radar.past || [];
         const nowcastFrames = radarMeta.radar.nowcast || [];
-        const allFrames = [...pastFrames, ...nowcastFrames];
+        const satelliteFrames = radarMeta.satellite?.infrared || [];
         rainViewerData = {
           host: radarMeta.host || 'https://tilecache.rainviewer.com',
           frames: pastFrames,
           nowcastFrames: nowcastFrames,
+          satelliteFrames: satelliteFrames,
           selectedFrameIndex: pastFrames.length > 0 ? pastFrames.length - 1 : 0,
           generatedTime: radarMeta.generated ? new Date(radarMeta.generated * 1000).toISOString() : retrievalTime
         };

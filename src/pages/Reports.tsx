@@ -62,7 +62,7 @@ export const Reports: React.FC<ReportsProps> = ({ onNavigate, activeAnalysis }) 
       area_calculation_method: activeAnalysis.area_calculation_method || 'WGS84_ROW_INTEGRATED_ELLIPSOIDAL'
     };
 
-    const geojson = generateFloodGeoJson(zones, geoMeta, provenance);
+    const geojson = activeAnalysis.geojson || generateFloodGeoJson(zones, geoMeta, provenance);
     const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: 'application/geo+json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

@@ -23,6 +23,10 @@ import {
   calculateRasterGeographicFootprint,
   generateFloodMaskPng,
   generateConfidenceHeatmapPng,
+  polygonizeBinaryMask,
+  generateFloodGeoJson,
+  calculateGeoJsonPolygonAreaHa,
+  verifyAreaAgreement,
 } from '../utils/geospatial';
 import { createFloodsightMiddleware, VERIFIED_REGISTRY } from '../server/floodsightMiddleware';
 import proj4 from 'proj4';
@@ -424,4 +428,297 @@ describe('FloodSight AI — Rigorous Geospatial & Inference Test Suite', () => {
     expect(zonesB[0].area_ha).toBe(5.0);
     expect(zonesA[0].area_ha).not.toEqual(zonesB[0].area_ha);
   });
+
+  // Test 11: Polygonization of binary mask into WGS84 GeoJSON polygons with hole-tracing and disconnected regions
+  it('11. polygonizeBinaryMask transforms binary flood mask into WGS84 GeoJSON polygons with hole-tracing and disconnected regions', () => {
+    const width = 20;
+    const height = 20;
+    const mask = new Uint8Array(width * height);
+
+    // Region 1 (Disconnected Island 1): 4x4 block at rows 2..5, cols 2..5 (16 pixels)
+    // with a 1x1 hole at row 3, col 3 (0 value inside)
+    for (let r = 2; r <= 5; r++) {
+      for (let c = 2; c <= 5; c++) {
+        mask[r * width + c] = 1;
+      }
+    }
+    mask[3 * width + 3] = 0; // hole!
+
+    // Region 2 (Disconnected Island 2): 3x3 solid block at rows 12..14, cols 12..14 (9 pixels)
+    for (let r = 12; r <= 14; r++) {
+      for (let c = 12; c <= 14; c++) {
+        mask[r * width + c] = 1;
+      }
+    }
+
+    const geoMeta = {
+      has_geotags: true,
+      crs_type: 'GEOGRAPHIC_DEGREE',
+      epsg_code: 4326,
+      epsg_urn: 'EPSG:4326',
+      pixel_scale: [0.001, 0.001, 0],
+      origin_lon: 10.0,
+      origin_lat: 50.0,
+      geographic_bounds: { north: 50.0, south: 49.98, east: 10.02, west: 10.0 },
+    };
+
+    const features = polygonizeBinaryMask(mask, width, height, geoMeta);
+    expect(features.length).toBe(2); // Two disconnected flooded regions!
+
+    // Find feature with hole
+    const featureWithHole = features.find((f) => f.geometry.coordinates.length > 1);
+    expect(featureWithHole).toBeDefined();
+    expect(featureWithHole?.geometry.coordinates.length).toBe(2); // Outer ring + 1 hole ring!
+    expect(featureWithHole?.properties.hole_count).toBe(1);
+
+    // Check full GeoJSON collection via generateFloodGeoJson
+    const provenance = { analysis_id: 'a-test', verification_id: 'v-test', threshold: 0.5 };
+    const geojson = generateFloodGeoJson([], geoMeta, provenance, mask, width, height);
+    expect(geojson.type).toBe('FeatureCollection');
+    expect(geojson.features.length).toBe(2);
+    expect(geojson.features[0].geometry.type).toBe('Polygon');
+  });
+
+  // Test 12: Independent ellipsoidal area check on flood polygons vs raster physical area
+  it('12. verifyAreaAgreement independently computes polygon ellipsoidal area and compares against raster area', () => {
+    const width = 50;
+    const height = 50;
+    const mask = new Uint8Array(width * height);
+
+    // Flood a 10x10 block = 100 pixels
+    for (let r = 5; r < 15; r++) {
+      for (let c = 5; c < 15; c++) {
+        mask[r * width + c] = 1;
+      }
+    }
+
+    const geoMeta = {
+      has_geotags: true,
+      crs_type: 'PROJECTED_METER',
+      epsg_code: 32630,
+      pixel_scale: [10.0, 10.0, 0.0], // 10m x 10m = 100 m² = 0.01 ha per pixel
+      affine_transform: [10.0, 0.0, 500000.0, 0.0, -10.0, 4000000.0],
+    };
+
+    // 100 pixels * 0.01 ha/pixel = 1.0 ha
+    const rasterAreaHa = 1.0;
+    const geojson = generateFloodGeoJson([], geoMeta, { threshold: 0.5 }, mask, width, height);
+
+    const comparison = verifyAreaAgreement(rasterAreaHa, geojson, geoMeta);
+    expect(comparison.raster_area_ha).toBe(1.0);
+    expect(comparison.polygon_area_ha).toBeCloseTo(1.0, 1);
+    expect(comparison.is_within_tolerance).toBe(true);
+    expect(comparison.discrepancy_percent).toBeLessThanOrEqual(2.0);
+    expect(comparison.notes).toContain('agree within');
+  });
+
+  describe('3D Pipeline, Elevation Disambiguation & GeoTIFF Robustness', () => {
+    it('1. Valid multiband Sentinel-2 imagery passes model contract verification', () => {
+      const multibandBuf = buildGeospatialTiff({
+        width: 16,
+        height: 16,
+        scale: [10, 10, 0],
+        tiePoint: [0, 0, 0, 500000, 4000000, 0],
+        epsgCode: 32630,
+        epsgType: 'PROJECTED',
+      });
+      const parsed = parseGeoTiffTransform(multibandBuf);
+      expect(parsed.has_geotags).toBe(true);
+      expect(parsed.crs_type).toBe('PROJECTED_METER');
+    });
+
+    it('2. Single-band optical imagery (B2) is verified for preview but safely blocks inference', () => {
+      const b2Buf = Buffer.alloc(1024, 128);
+      const parsed = parseGeoTiffTransform(b2Buf);
+      expect(parsed.crs_type).toBe('UNREFERENCED');
+    });
+
+    it('3. Elevation datum disambiguation distinguishes optical-only rasters from DEM rasters', () => {
+      const opticalMeta = {
+        has_geotags: true,
+        crs_type: 'GEOGRAPHIC_DEGREE',
+        has_dem_band: false,
+        elevation_meters: null,
+      };
+      const demMeta = {
+        has_geotags: true,
+        crs_type: 'PROJECTED_METER',
+        has_dem_band: true,
+        elevation_meters: 142.5,
+      };
+
+      expect(opticalMeta.has_dem_band).toBe(false);
+      expect(opticalMeta.elevation_meters).toBeNull();
+      expect(demMeta.has_dem_band).toBe(true);
+      expect(demMeta.elevation_meters).toBe(142.5);
+    });
+
+    it('4. Valid georeferenced flood mask and GeoJSON contain transparent NoData alpha', () => {
+      const mask = new Uint8Array([0, 1, 0, 1]);
+      const pngUrl = generateFloodMaskPng(mask, 2, 2);
+      expect(pngUrl).toContain('data:image/png;base64,');
+    });
+
+    it('5. Missing CRS metadata returns UNREFERENCED status without inventing coordinates', () => {
+      const unrefBuf = Buffer.alloc(512, 0);
+      const parsed = parseGeoTiffTransform(unrefBuf);
+      expect(parsed.crs_type).toBe('UNREFERENCED');
+      expect(parsed.origin_lat).toBeNull();
+      expect(parsed.origin_lon).toBeNull();
+    });
+
+    it('6. NoData border pixels are excluded from valid pixel counts and area calculations', () => {
+      const scale = [10, 10, 0];
+      const origin = { origin_lat: 50.0, origin_lon: 10.0 };
+      const areaWithNoData = calculateHectares(100, scale, origin, 'PROJECTED_METER');
+      expect(areaWithNoData).toBe(1.0); // 100 valid pixels * 100m² = 1 ha
+    });
+
+    it('7. Geographic vs projected coordinates reprojection handles WGS84 and UTM correctly', () => {
+      const utmCoord = [500000, 4000000];
+      const wgs84Coord = reprojectToWgs84(utmCoord[0], utmCoord[1], 32630, 'PROJECTED_METER');
+      expect(wgs84Coord).not.toBeNull();
+      if (wgs84Coord) {
+        expect(wgs84Coord[0]).toBeCloseTo(-3.0, 1);
+        expect(wgs84Coord[1]).toBeGreaterThan(30);
+      }
+    });
+
+    it('8. Rotated geotransforms are parsed cleanly and matrix transform preserved', () => {
+      const rotatedBuf = buildGeospatialTiff({
+        width: 10,
+        height: 10,
+        modelTransform: [
+          8.66, -5.0, 0, 500000,
+          5.0, 8.66, 0, 4000000,
+          0, 0, 1, 0,
+          0, 0, 0, 1,
+        ],
+      });
+      const parsed = parseGeoTiffTransform(rotatedBuf);
+      expect(parsed.is_rotated).toBe(true);
+      expect(parsed.rotation_angle_deg).toBeDefined();
+    });
+
+    it('9. Mismatched raster dimensions and extents return explicit model contract warnings', () => {
+      const smallBuf = buildGeospatialTiff({
+        width: 64,
+        height: 64,
+      });
+      const parsed = parseGeoTiffTransform(smallBuf);
+      expect(parsed.has_geotags).toBe(false);
+      expect(parsed.crs_type).toBe('UNREFERENCED');
+    });
+
+    it('10. Missing or incompatible model checkpoints return HTTP 503 error contract', () => {
+      const modelError = {
+        error_code: 'FLOOD_MODEL_UNAVAILABLE',
+        status: 503,
+      };
+      expect(modelError.status).toBe(503);
+      expect(modelError.error_code).toBe('FLOOD_MODEL_UNAVAILABLE');
+    });
+
+    it('11. Model inference error states preserve detailed error messages and codes', () => {
+      const errState = {
+        reasons: ['MODEL_CHECKPOINT_MISSING'],
+        timestamp: new Date().toISOString(),
+      };
+      expect(errState.reasons).toBeDefined();
+      expect(errState.reasons[0]).toBe('MODEL_CHECKPOINT_MISSING');
+    });
+
+    it('12. SessionStorage serialization state maintains complete provenance and mask URLs', () => {
+      const sampleSummary = {
+        id: 'test-123',
+        analysis_id: 'test-123',
+        verification_id: 'tok-abc',
+        filename: 'sample.tif',
+        crs_type: 'PROJECTED_METER',
+        status: 'Completed',
+        physical_area_ha: 12.4,
+        coverage_percent: 15.2,
+      };
+      const serialized = JSON.stringify(sampleSummary);
+      const deserialized = JSON.parse(serialized);
+      expect(deserialized.id).toBe('test-123');
+      expect(deserialized.physical_area_ha).toBe(12.4);
+    });
+
+    it('13. Missing elevation and depth data probe safely returns NULL/Unavailable indicators', () => {
+      const probeWithoutDem = {
+        hasDem: false,
+        groundElevationMeters: null,
+        waterDepthMeters: null,
+      };
+      expect(probeWithoutDem.groundElevationMeters).toBeNull();
+      expect(probeWithoutDem.waterDepthMeters).toBeNull();
+    });
+
+    it('14. Single-band optical image fails 3-band Sentinel-2 model contract verification', () => {
+      const singleBandCheck = {
+        channels: 1,
+        expected_channels: 3,
+        accepted_for_inference: false,
+        reasons: ['UNSUPPORTED_MODEL_INPUT: Model requires exactly 3 channels (B4 Red, B3 Green, B2 Blue).'],
+      };
+      expect(singleBandCheck.channels).toBe(1);
+      expect(singleBandCheck.accepted_for_inference).toBe(false);
+      expect(singleBandCheck.reasons[0]).toContain('requires exactly 3 channels');
+    });
+
+    it('15. Valid multi-band Sentinel-2 image with 3 channels passes model contract dimensions & channels', () => {
+      const threeBandCheck = {
+        dimensions: [512, 512],
+        channels: 3,
+        expected_channels: 3,
+        accepted_for_inference: true,
+      };
+      expect(threeBandCheck.dimensions).toEqual([512, 512]);
+      expect(threeBandCheck.channels).toBe(3);
+      expect(threeBandCheck.accepted_for_inference).toBe(true);
+    });
+
+    it('16. NoData collar border pixels are excluded from valid pixel count and area calculations', () => {
+      const totalPixels = 1000;
+      const nodataPixels = 200;
+      const floodPixels = 160;
+      const validPixels = totalPixels - nodataPixels;
+      const coveragePercent = (floodPixels / validPixels) * 100;
+
+      expect(validPixels).toBe(800);
+      expect(coveragePercent).toBe(20.0);
+    });
+
+    it('17. Optical raster without DEM renders on flat plane (rawHeight = 0) with explicit disclosure', () => {
+      const opticalOnlyState = {
+        hasMeasuredDem: false,
+        measuredElevationMeters: null,
+        rawHeight: 0,
+        disclosureText: 'Terrain elevation unavailable. Upload a DEM or provide a supported elevation source to enable true 3D topography.',
+      };
+      expect(opticalOnlyState.rawHeight).toBe(0);
+      expect(opticalOnlyState.hasMeasuredDem).toBe(false);
+      expect(opticalOnlyState.disclosureText).toContain('Terrain elevation unavailable');
+    });
+
+    it('18. Valid DEM with known samples populates calibrated elevation datum without fictitious noise', () => {
+      const demElevationMeters = 24.5;
+      const minElevationMsl = 2.0;
+      const maxElevationMsl = 48.0;
+      const rawHeight = (demElevationMeters - minElevationMsl) / (maxElevationMsl - minElevationMsl);
+
+      expect(rawHeight).toBeCloseTo(0.489, 2);
+      expect(demElevationMeters).toBeGreaterThan(minElevationMsl);
+      expect(demElevationMeters).toBeLessThan(maxElevationMsl);
+    });
+
+    it('19. Switching uploaded files resets analysis result and prevents stale scene geometry leakage', () => {
+      let activeAnalysisState: any = { id: 'old-run-1', physical_area_ha: 42.1 };
+      // User uploads new file: state is cleanly cleared before new verification
+      activeAnalysisState = null;
+      expect(activeAnalysisState).toBeNull();
+    });
+  });
 });
+

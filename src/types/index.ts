@@ -49,8 +49,12 @@ export interface VerificationResponse {
   size_bytes: number;
   checks: VerificationChecks;
   reasons: string[];
-  warnings: string[];
+  raster_preview_data_url?: string;
+  band_count?: number;
+  band_names?: string[];
+  sampled_dimensions?: [number, number];
   model_contract: ModelContractInfo;
+  warnings?: string[];
   timestamp: string;
 }
 
@@ -125,6 +129,8 @@ export interface FloodAnalysisResult {
   overlay_data_url?: string;
   mask_png_data_url?: string;
   confidence_heatmap_data_url?: string;
+  raster_preview_data_url?: string;
+  geojson?: any;
   created_at: string;
 }
 
@@ -140,6 +146,9 @@ export interface RainViewerMetadata {
   radar: {
     past: RainViewerRadarFrame[];
     nowcast: RainViewerRadarFrame[];
+  };
+  satellite?: {
+    infrared?: RainViewerRadarFrame[];
   };
 }
 
@@ -176,6 +185,7 @@ export interface LiveWeatherData {
     host: string;
     frames: RainViewerRadarFrame[];
     nowcastFrames: RainViewerRadarFrame[];
+    satelliteFrames?: RainViewerRadarFrame[];
     selectedFrameIndex: number;
     generatedTime: string;
   };
@@ -284,6 +294,7 @@ export interface AnalysisSummary {
   filename: string;
   crs_type?: string;
   crs_name?: string | null;
+  epsg_code?: number | null;
   origin_lat?: number | null;
   origin_lon?: number | null;
   pixel_scale?: number[] | null;
@@ -308,6 +319,8 @@ export interface AnalysisSummary {
   mask_png_data_url?: string;
   overlay_data_url?: string;
   confidence_heatmap_data_url?: string;
+  raster_preview_data_url?: string;
+  geojson?: any;
   spatial_zones?: Array<any>;
   corner_coordinates_latlng?: [number, number][] | null;
   inference_latency_ms?: number;

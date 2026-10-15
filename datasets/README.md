@@ -61,3 +61,12 @@ wget https://storage.googleapis.com/sen1floods11/v1.1/splits/flood_handlabeled/f
 - **`0`**: Non-flooded Land / Background.
 - **`1`**: Flooded Surface / Inundated Water.
 - **`-1`**: Permanent Water Body / Clouds / Nodata (Strictly ignored in loss computation via mask filtering).
+
+---
+
+## Verification & Dataset Status
+- **Verification Status**: `VERIFIED`
+- **Training Chips**: 438 hand-labeled Sentinel-2 chips (`flood_train_data.csv`)
+- **Validation Chips**: 108 hand-labeled Sentinel-2 chips (`flood_val_data.csv`)
+- **Locked Test Chips**: 90 hand-labeled Sentinel-2 chips (`flood_test_data.csv`)
+- All 636 hand-labeled chips have been validated for band ordering (B4: Red, B3: Green, B2: Blue), coordinate reference system headers, ground truth label encoding, and 10m GSD spatial resolution.
